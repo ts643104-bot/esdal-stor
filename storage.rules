@@ -1,0 +1,23 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == 'admin@esdal.com';
+    }
+
+    match /products/{imageId} {
+      allow read: if true; // Anyone can view product images
+      allow write, delete: if isAdmin() && 
+                           request.resource.size < 2 * 1024 * 1024 && // Max 2MB
+                           request.resource.contentType.matches('image/.*'); // Only images
+    }
+
+    match /receipts/{receiptId} {
+      allow read: if isAdmin(); // Only admin can view receipts
+      allow write: if request.resource.size < 2 * 1024 * 1024 && // Max 2MB
+                      request.resource.contentType.matches('image/.*'); // Only images
+    }
+  }
+}

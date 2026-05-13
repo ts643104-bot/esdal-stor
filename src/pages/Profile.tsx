@@ -1,0 +1,411 @@
+import { useState, useEffect } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { auth, hasFirebase } from "@/lib/firebase";
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
+import { db } from "@/lib/db";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { Link } from "wouter";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { toast } from "sonner";
+import { ChevronRight, ChevronLeft, Package, UserCircle, LogOut, Award, CheckCircle } from "lucide-react";
+import { MapPicker } from "@/components/MapPicker";
+import type { Order, UserProfile } from "@/lib/types";
+
+export default function Profile() {
+  const { user, profile, loading, logout, refreshProfile } = useAuth();
+  const { t, lang } = useLanguage();
+  
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
+  
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
+  const [governorate, setGovernorate] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [confirmingReceiptId, setConfirmingReceiptId] = useState<string | null>(null);
+  const [loadingOrders, setLoadingOrders] = useState(false);
+
+  useEffect(() => {
+    if (profile) {
+      setName(profile.name || "");
+      setPhone(profile.phone || "");
+      setAddress(profile.address || "");
+      setGovernorate(profile.governorate || "");
+    }
+  }, [profile]);
+
+  useEffect(() => {
+    if (user) {
+      setLoadingOrders(true);
+      db.getOrdersByUser(user.uid).then(res => {
+        setOrders(res);
+        setLoadingOrders(false);
+      });
+    }
+  }, [user]);
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !password) {
+      toast.error(t("auth.error.empty_fields" as any) || "يرجى ملء جميع الحقول");
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      if (hasFirebase && auth) {
+        if (isRegistering) {
+          const cred = await createUserWithEmailAndPassword(auth, email, password);
+          await db.saveUserProfile({
+            id: cred.user.uid,
+            name: email.split("@")[0],
+            phone: "",
+            address: "",
+            governorate: "",
+            joinedAt: new Date().toISOString()
+          });
+          toast.success(t("auth.success.registered" as any) || "تم إنشاء الحساب بنجاح");
+        } else {
+          await signInWithEmailAndPassword(auth, email, password);
+          toast.success(t("auth.success.logged_in" as any) || "تم تسجيل الدخول بنجاح");
+        }
+      } else {
+        // Local mock auth
+        const uid = "local_" + email.replace(/[^a-zA-Z0-9]/g, "");
+        localStorage.setItem("esdal_local_user", JSON.stringify({ id: uid, email }));
+        if (isRegistering) {
+          await db.saveUserProfile({
+            id: uid,
+            name: email.split("@")[0],
+            phone: "",
+            address: "",
+            governorate: "",
+            joinedAt: new Date().toISOString()
+          });
+        }
+        window.location.reload();
+      }
+    } catch (err: any) {
+      console.error(err);
+      toast.error(t("auth.error.failed" as any) || "فشل تسجيل الدخول: " + err.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleConfirmReceipt = async (orderId: string) => {
+    setConfirmingReceiptId(orderId);
+    try {
+      await db.updateOrderStatus(orderId, "completed");
+      setOrders(orders.map(o => o.id === orderId ? { ...o, status: "completed" } : o));
+      toast.success(t("profile.order.receipt_confirmed" as any) || "تم تأكيد الاستلام بنجاح");
+      
+      // Simulate sending a message to the customer
+      setTimeout(() => {
+        toast("📩 تم إرسال رسالة تأكيد الاستلام إلى بريدك/هاتفك بنجاح!", {
+          duration: 5000,
+          position: "top-center",
+        });
+      }, 1000);
+      
+    } catch (err) {
+      console.error(err);
+      toast.error("حدث خطأ أثناء تأكيد الاستلام");
+    } finally {
+      setConfirmingReceiptId(null);
+    }
+  };
+
+  const handleMapLocation = (link: string, detectedGov?: string) => {
+    setAddress(prev => prev + (prev.trim() ? "\n\nرابط الموقع: " : "رابط الموقع: ") + link);
+    if (detectedGov) {
+      setGovernorate(detectedGov);
+      toast.success(lang === "ar" ? `تم تحديد المحافظة (${detectedGov}) تلقائياً` : `Governorate (${detectedGov}) detected automatically`);
+    } else {
+      toast.success(lang === "ar" ? "تم اضافت الموقع بالعنوان بنجاح" : "Location added to address successfully");
+    }
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setSavingProfile(true);
+    try {
+      const p: UserProfile = {
+        id: user.uid,
+        name,
+        phone,
+        address,
+        governorate,
+        joinedAt: profile?.joinedAt || new Date().toISOString(),
+        loyaltyPoints: profile?.loyaltyPoints || 0
+      };
+      await db.saveUserProfile(p);
+      await refreshProfile();
+      toast.success(t("profile.success.saved" as any) || "تم حفظ البيانات بنجاح");
+    } catch (err) {
+      console.error(err);
+      toast.error(t("profile.error.failed" as any) || "حدث خطأ أثناء حفظ البيانات");
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const totalEarnedPoints = profile?.totalEarnedPoints || 0;
+  let currentTierName = t("tier.bronze" as any) || "برونزي";
+  let nextTierName = t("tier.silver" as any) || "فضي";
+  let nextTierPoints = 500;
+  let pointsToNextTier = Math.max(0, 500 - totalEarnedPoints);
+  let progressPercentage = Math.min(100, (totalEarnedPoints / 500) * 100);
+
+  if (totalEarnedPoints >= 1000) {
+    currentTierName = t("tier.gold" as any) || "ذهبي";
+    nextTierName = "";
+    nextTierPoints = 1000;
+    pointsToNextTier = 0;
+    progressPercentage = 100;
+  } else if (totalEarnedPoints >= 500) {
+    currentTierName = t("tier.silver" as any) || "فضي";
+    nextTierName = t("tier.gold" as any) || "ذهبي";
+    nextTierPoints = 1000;
+    pointsToNextTier = Math.max(0, 1000 - totalEarnedPoints);
+    progressPercentage = Math.min(100, ((totalEarnedPoints - 500) / 500) * 100);
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="container mx-auto px-4 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Link href="/">
+              <Button variant="ghost" size="icon">
+                {lang === "ar" ? <ChevronRight className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}
+              </Button>
+            </Link>
+            <h1 className="text-xl font-bold font-display">{t("nav.profile" as any) || "حسابي"}</h1>
+          </div>
+          {user && (
+            <Button variant="ghost" size="sm" onClick={() => void logout()} className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
+              <LogOut className="h-4 w-4 me-2" />
+              {t("auth.logout" as any) || "تسجيل خروج"}
+            </Button>
+          )}
+        </div>
+      </header>
+
+      <main className="container mx-auto px-4 py-8 max-w-3xl">
+        {!user ? (
+          <div className="bg-card border rounded-2xl p-6 sm:p-8 shadow-sm">
+            <div className="text-center mb-8">
+              <UserCircle className="h-16 w-16 mx-auto text-primary mb-4" />
+              <h2 className="text-2xl font-bold">{isRegistering ? (t("auth.register" as any) || "إنشاء حساب جديد") : (t("auth.login" as any) || "تسجيل الدخول")}</h2>
+              <p className="text-muted-foreground mt-2">
+                {isRegistering 
+                  ? (t("auth.register_desc" as any) || "أنشئ حساباً لحفظ بياناتك وتتبع طلباتك بسهولة")
+                  : (t("auth.login_desc" as any) || "سجل الدخول لمتابعة طلباتك وتعديل بياناتك")}
+              </p>
+            </div>
+
+            <form onSubmit={handleAuth} className="space-y-4">
+              <div className="space-y-2">
+                <Label>{t("auth.email" as any) || "البريد الإلكتروني"}</Label>
+                <Input 
+                  type="email" 
+                  value={email} 
+                  onChange={(e) => setEmail(e.target.value)} 
+                  required 
+                  dir="ltr"
+                  className="text-left"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>{t("auth.password" as any) || "كلمة المرور"}</Label>
+                <Input 
+                  type="password" 
+                  value={password} 
+                  onChange={(e) => setPassword(e.target.value)} 
+                  required 
+                  dir="ltr"
+                  className="text-left"
+                />
+              </div>
+              
+              <Button type="submit" className="w-full h-12 text-md" disabled={authLoading}>
+                {authLoading ? "..." : (isRegistering ? (t("auth.register_btn" as any) || "إنشاء حساب") : (t("auth.login_btn" as any) || "دخول"))}
+              </Button>
+            </form>
+
+            <div className="mt-6 text-center">
+              <button 
+                type="button"
+                onClick={() => setIsRegistering(!isRegistering)}
+                className="text-primary hover:underline text-sm font-medium"
+              >
+                {isRegistering 
+                  ? (t("auth.have_account" as any) || "لديك حساب بالفعل؟ سجل دخولك") 
+                  : (t("auth.no_account" as any) || "ليس لديك حساب؟ أنشئ حساباً جديداً")}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-8">
+            {/* Loyalty Points */}
+            <section className="bg-primary/5 border border-primary/20 rounded-2xl p-6 shadow-sm">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="bg-primary/10 p-3 rounded-full">
+                    <Award className="h-8 w-8 text-primary" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold">{t("loyalty.title" as any) || "نقاط الولاء"}</h2>
+                    <p className="text-sm text-muted-foreground">{t("loyalty.earn_desc" as any) || "اربح نقطة واحدة مقابل كل 10 جنيهات تشتري بها."}</p>
+                  </div>
+                </div>
+                <div className="text-center bg-background rounded-xl py-3 px-6 border shadow-sm min-w-32">
+                  <p className="text-sm text-muted-foreground mb-1">{t("loyalty.balance" as any) || "الرصيد"}</p>
+                  <p className="text-3xl font-bold text-primary">{profile?.loyaltyPoints || 0}</p>
+                  <p className="text-xs text-muted-foreground">{t("loyalty.points" as any) || "نقطة"}</p>
+                </div>
+              </div>
+
+              <div className="bg-background rounded-xl p-4 border shadow-sm mt-4">
+                <div className="flex justify-between items-end mb-2">
+                  <div>
+                    <p className="text-sm text-muted-foreground">المستوى الحالي</p>
+                    <p className="font-bold text-lg text-primary">{currentTierName}</p>
+                  </div>
+                  {nextTierName && (
+                    <div className="text-left">
+                      <p className="text-sm text-muted-foreground">المستوى القادم</p>
+                      <p className="font-bold text-md">{nextTierName}</p>
+                    </div>
+                  )}
+                </div>
+                
+                <div className="w-full bg-gray-200 rounded-full h-2.5 mb-2 dark:bg-gray-700">
+                  <div className="bg-primary h-2.5 rounded-full" style={{ width: `${progressPercentage}%` }}></div>
+                </div>
+                
+                {nextTierName ? (
+                  <p className="text-xs text-muted-foreground text-center">
+                    تحتاج إلى <span className="font-bold">{pointsToNextTier}</span> نقطة إضافية للوصول إلى المستوى {nextTierName}
+                  </p>
+                ) : (
+                  <p className="text-xs text-green-600 font-bold text-center">
+                    أنت في أعلى مستوى!
+                  </p>
+                )}
+              </div>
+            </section>
+
+            {/* Profile Info */}
+            <section className="bg-card border rounded-2xl p-6 shadow-sm">
+              <h2 className="text-xl font-bold flex items-center gap-2 mb-6">
+                <UserCircle className="h-6 w-6 text-primary" />
+                {t("profile.personal_info" as any) || "البيانات الشخصية"}
+              </h2>
+              <form onSubmit={handleSaveProfile} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>{t("profile.name" as any) || "الاسم الكامل"}</Label>
+                    <Input value={name} onChange={e => setName(e.target.value)} required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t("profile.phone" as any) || "رقم التواصل"}</Label>
+                    <Input value={phone} onChange={e => setPhone(e.target.value)} required dir="ltr" className="text-left" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>{t("profile.governorate" as any) || "المحافظة"}</Label>
+                    <Input value={governorate} onChange={e => setGovernorate(e.target.value)} required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t("profile.address" as any) || "العنوان التفصيلي"}</Label>
+                    <Input value={address} onChange={e => setAddress(e.target.value)} required />
+                    <div className="mt-2">
+                      <MapPicker onLocationSelect={handleMapLocation} />
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-2">
+                  <Button type="submit" disabled={savingProfile}>
+                    {savingProfile ? "..." : (t("profile.save" as any) || "حفظ التعديلات")}
+                  </Button>
+                </div>
+              </form>
+            </section>
+
+            {/* Order History */}
+            <section className="bg-card border rounded-2xl p-6 shadow-sm">
+              <h2 className="text-xl font-bold flex items-center gap-2 mb-6">
+                <Package className="h-6 w-6 text-primary" />
+                {t("profile.order_history" as any) || "سجل الطلبات"}
+              </h2>
+              
+              {loadingOrders ? (
+                <div className="text-center py-8 text-muted-foreground">{t("profile.loading" as any) || "جاري التحميل..."}</div>
+              ) : orders.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Package className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>{t("profile.no_orders" as any) || "لا توجد طلبات سابقة"}</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {orders.map(order => (
+                    <div key={order.id} className="border rounded-xl p-4 flex flex-col sm:flex-row gap-4 justify-between">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-bold font-mono">#{order.id}</span>
+                          <span className={`text-xs px-2 py-1 rounded-full ${order.status === "completed" ? "bg-green-100 text-green-700" : "bg-orange-100 text-orange-700"}`}>
+                            {order.status === "completed" ? (t("profile.status.completed" as any) || "مكتمل") : (t("profile.status.pending" as any) || "قيد المراجعة")}
+                          </span>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          {new Date(order.date).toLocaleDateString(lang === "ar" ? "ar-EG" : "en-US", { dateStyle: "long" })}
+                        </p>
+                        <p className="text-sm mt-2">
+                          {order.items.length} {t("profile.order.items" as any) || "عنصر — الإجمالي: "} <span className="font-bold text-primary">{order.total} ج.م</span>
+                        </p>
+                      </div>
+                      <div className="flex flex-col sm:items-end justify-between gap-3">
+                        <span className="text-sm">{order.paymentMethod === "cod" ? (t("profile.payment.cod" as any) || "الدفع عند الاستلام") : (t("profile.payment.online" as any) || "أونلاين")}</span>
+                        {order.status === "pending" && (
+                          <Button 
+                            size="sm" 
+                            variant="outline" 
+                            className="gap-2 text-green-600 hover:text-green-700 hover:bg-green-50 border-green-200"
+                            onClick={() => handleConfirmReceipt(order.id)}
+                            disabled={confirmingReceiptId === order.id}
+                          >
+                            <CheckCircle className="h-4 w-4" />
+                            {confirmingReceiptId === order.id ? "..." : (t("profile.order.confirm_receipt" as any) || "تم الاستلام")}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}

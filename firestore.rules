@@ -1,0 +1,42 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper function to check if the user is an admin
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == 'admin@esdal.com';
+    }
+
+    match /products/{product} {
+      allow read: if true; // Anyone can view products
+      allow write, delete: if isAdmin(); // Only admin can modify products
+    }
+
+    match /orders/{order} {
+      allow read: if isAdmin() || (request.auth != null && request.auth.uid == resource.data.userId);
+      allow create: if true; // Anyone can place an order
+      allow update, delete: if isAdmin();
+    }
+
+    match /expenses/{expense} {
+      allow read, write, delete: if isAdmin(); // Only admin can access expenses
+    }
+
+    match /users/{user} {
+      allow read: if isAdmin() || (request.auth != null && request.auth.uid == user);
+      allow write: if isAdmin() || (request.auth != null && request.auth.uid == user);
+      allow delete: if isAdmin();
+    }
+
+    match /settings/{doc} {
+      allow read: if true; // Settings are public (like discount percentage)
+      allow write: if isAdmin();
+    }
+
+    match /promoCodes/{promo} {
+      allow read: if true; // Promo codes can be validated by anyone
+      allow write, delete: if isAdmin();
+    }
+  }
+}
