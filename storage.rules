@@ -1,0 +1,33 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAdmin() {
+      return request.auth != null && (request.auth.token.admin == true || request.auth.token.email == 'admin@esdal.com');
+    }
+
+    // Product images: public read, only admin can write
+    match /products/{imageId} {
+      allow read: if true;
+      allow write, delete: if isAdmin()
+        && request.resource.size < 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // Payment receipts: user-scoped path to prevent spam/overwrite
+    // Client uploads to: receipts/{uid}/{random}_{filename}
+    match /receipts/{uid}/{receiptId} {
+      allow read: if isAdmin() || (request.auth != null && request.auth.uid == uid);
+      allow write: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.size < 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if isAdmin();
+    }
+
+    // Default deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

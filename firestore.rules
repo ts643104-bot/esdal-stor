@@ -1,0 +1,113 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Prefer custom claim: admin=true (recommended)
+    // Email fallback kept for migration.
+    function isAdmin() {
+      return isSignedIn() && (request.auth.token.admin == true || request.auth.token.email == 'admin@esdal.com');
+    }
+
+    function hasOnlyKeys(allowedKeys) {
+      return request.resource.data.keys().hasOnly(allowedKeys);
+    }
+
+    function isNonEmptyString(x, maxLen) {
+      return x is string && x.size() > 0 && x.size() <= maxLen;
+    }
+
+    function hasField(field) {
+      return request.resource.data.keys().hasAny([field]);
+    }
+
+    function isOptionalStringField(field, maxLen) {
+      return !hasField(field) || (request.resource.data[field] is string && request.resource.data[field].size() <= maxLen);
+    }
+
+    function isMoney(x) {
+      return x is number && x >= 0 && x <= 1000000;
+    }
+
+    // -------------------- Products --------------------
+    match /products/{productId} {
+      allow read: if true;
+
+      allow create, update: if isAdmin()
+        && hasOnlyKeys([
+          'id','name','price_egp','category','description','in_stock','image_url','images','stock_quantity'
+        ])
+        && isNonEmptyString(request.resource.data.name, 120)
+        && (request.resource.data.price_egp is number) && request.resource.data.price_egp > 0 && request.resource.data.price_egp <= 1000000
+        && (request.resource.data.category is string) && request.resource.data.category.size() <= 60
+        && (request.resource.data.description is string) && request.resource.data.description.size() <= 2000
+        && (request.resource.data.in_stock is bool)
+        && (request.resource.data.image_url is string) && request.resource.data.image_url.size() <= 1000
+        && (request.resource.data.images is list) && request.resource.data.images.size() <= 10
+        && (request.resource.data.stock_quantity is number) && request.resource.data.stock_quantity >= 0 && request.resource.data.stock_quantity <= 100000;
+
+      allow delete: if isAdmin();
+    }
+
+    // -------------------- Orders --------------------
+    match /orders/{orderId} {
+      // Admin can read all. User can read own.
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+
+      // Anyone can place an order, but only if authenticated (anonymous auth is fine)
+      allow create: if isSignedIn()
+        && hasOnlyKeys([
+          'id','date','items','total','status','paymentMethod','senderPhone','customerName','customerAddress','customerPhone','governorate','shippingCost','preferredTime','preferredDate','discountApplied','userId','loyaltyPointsEarned','loyaltyPointsRedeemed','paymentReceiptUrl'
+        ])
+        && (request.resource.data.userId is string) && request.resource.data.userId == request.auth.uid
+        && (request.resource.data.status == 'pending')
+        && (request.resource.data.paymentMethod == 'cod' || request.resource.data.paymentMethod == 'online')
+        && isMoney(request.resource.data.total)
+        && (request.resource.data.items is list) && request.resource.data.items.size() > 0 && request.resource.data.items.size() <= 50
+        && isOptionalStringField('customerName', 120)
+        && isOptionalStringField('customerAddress', 600)
+        && isOptionalStringField('customerPhone', 40)
+        && isOptionalStringField('senderPhone', 40)
+        && isOptionalStringField('governorate', 60)
+        && (!hasField('shippingCost') || isMoney(request.resource.data.shippingCost))
+        && (!hasField('discountApplied') || isMoney(request.resource.data.discountApplied))
+        && (!hasField('paymentReceiptUrl') || (request.resource.data.paymentReceiptUrl is string && request.resource.data.paymentReceiptUrl.size() <= 1200));
+
+      // Only admin updates order status / deletes
+      allow update, delete: if isAdmin();
+    }
+
+    // -------------------- Expenses --------------------
+    match /expenses/{expenseId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    // -------------------- Users --------------------
+    match /users/{uid} {
+      allow read: if isAdmin() || (isSignedIn() && request.auth.uid == uid);
+      allow create, update: if isAdmin() || (isSignedIn() && request.auth.uid == uid);
+      allow delete: if isAdmin();
+    }
+
+    // -------------------- Settings --------------------
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // -------------------- Promo Codes --------------------
+    match /promoCodes/{promoId} {
+      allow read: if true;
+      allow write, delete: if isAdmin();
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
