@@ -17,5 +17,24 @@ export default defineConfig({
   ],
   resolve: { alias: { "@": path.resolve(__dirname, "./src") } },
   base: "./",
-  build: { outDir: "dist", emptyOutDir: true },
+  build: { 
+    outDir: "dist", 
+    emptyOutDir: true,
+    minify: "terser",
+    terserOptions: {
+      compress: {
+        drop_console: true,
+        drop_debugger: true
+      }
+    },
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["react", "react-dom", "wouter"],
+          firebase: ["firebase/app", "firebase/auth", "firebase/firestore", "firebase/storage"],
+          ui: ["lucide-react", "clsx", "tailwind-merge", "framer-motion"]
+        }
+      }
+    }
+  },
 });

@@ -5,9 +5,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Search, Package, CheckCircle2, Clock } from "lucide-react";
 import { db } from "@/lib/db";
+import { useLanguage } from "@/contexts/LanguageContext";
 import type { Order } from "@/lib/types";
 
 export default function TrackOrder() {
+  const { t, lang } = useLanguage();
   const [orderId, setOrderId] = useState("");
   const [order, setOrder] = useState<Order | null>(null);
   const [searched, setSearched] = useState(false);
@@ -43,30 +45,30 @@ export default function TrackOrder() {
   return (
     <Dialog onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button variant="outline" className="hidden sm:flex gap-2 text-primary border-primary/30 hover:bg-primary/10">
+        <Button variant="outline" size="sm" className="h-8 w-8 sm:h-auto sm:w-auto p-0 sm:px-3 sm:py-2 flex gap-2 text-primary border-primary/30 hover:bg-primary/10 transition-all active:scale-95">
           <Package className="h-4 w-4" />
-          تتبع الطلب
+          <span className="hidden sm:inline">{t("nav.track")}</span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[450px]" dir="rtl">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[450px]" dir={lang === "ar" ? "rtl" : "ltr"}>
+        <DialogHeader className="text-right">
           <DialogTitle className="font-display text-xl flex items-center gap-2">
             <Package className="h-5 w-5 text-primary" />
-            تتبع حالة طلبك
+            {lang === "ar" ? "تتبع حالة طلبك" : "Track Your Order Status"}
           </DialogTitle>
         </DialogHeader>
 
         <form onSubmit={handleTrack} className="space-y-4 pt-4">
           <div className="space-y-2">
-            <Label htmlFor="orderId">رقم الطلب</Label>
+            <Label htmlFor="orderId">{lang === "ar" ? "رقم الطلب" : "Order Number"}</Label>
             <div className="flex gap-2">
               <Input
                 id="orderId"
-                placeholder="مثال: X7B9K2M"
+                placeholder="X7B9K2M"
                 value={orderId}
                 onChange={(e) => setOrderId(e.target.value)}
                 dir="ltr"
-                className="text-right flex-1"
+                className={`flex-1 ${lang === "ar" ? "text-right" : "text-left"}`}
                 autoComplete="off"
               />
               <Button type="submit" disabled={loading} className="px-4">
@@ -74,7 +76,7 @@ export default function TrackOrder() {
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              أدخل رقم الطلب الذي حصلت عليه في رسالة الواتساب بدون علامة #.
+              {lang === "ar" ? "أدخل رقم الطلب الذي حصلت عليه في رسالة الواتساب بدون علامة #." : "Enter the order number you received in the WhatsApp message without the # sign."}
             </p>
           </div>
         </form>
@@ -83,34 +85,34 @@ export default function TrackOrder() {
           <div className="mt-4 border-t pt-6 animate-in fade-in slide-in-from-bottom-2">
             {!order ? (
               <div className="text-center py-6 text-destructive bg-destructive/10 rounded-lg">
-                <p className="font-semibold">لم نتمكن من العثور على هذا الطلب</p>
-                <p className="text-sm mt-1">تأكد من كتابة الرقم بشكل صحيح</p>
+                <p className="font-semibold">{lang === "ar" ? "لم نتمكن من العثور على هذا الطلب" : "We couldn't find this order"}</p>
+                <p className="text-sm mt-1">{lang === "ar" ? "تأكد من كتابة الرقم بشكل صحيح" : "Make sure the number is written correctly"}</p>
               </div>
             ) : (
               <div className="space-y-6">
                 <div className="flex items-center justify-between border-b pb-4">
                   <div>
-                    <p className="text-sm text-muted-foreground mb-1">رقم الطلب</p>
+                    <p className="text-sm text-muted-foreground mb-1">{lang === "ar" ? "رقم الطلب" : "Order Number"}</p>
                     <p className="font-mono font-bold text-lg">#{order.id}</p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm text-muted-foreground mb-1">التاريخ</p>
-                    <p className="font-medium text-sm" dir="ltr">{new Date(order.date).toLocaleDateString("ar-EG")}</p>
+                  <div className={`text-${lang === "ar" ? "right" : "left"}`}>
+                    <p className="text-sm text-muted-foreground mb-1">{lang === "ar" ? "التاريخ" : "Date"}</p>
+                    <p className="font-medium text-sm" dir="ltr">{new Date(order.date).toLocaleDateString(lang === "ar" ? "ar-EG" : "en-US")}</p>
                   </div>
                 </div>
 
                 <div>
-                  <h4 className="text-sm font-semibold mb-3">حالة الطلب الحالية:</h4>
+                  <h4 className="text-sm font-semibold mb-3">{lang === "ar" ? "حالة الطلب الحالية:" : "Current Status:"}</h4>
                   <div className="relative">
-                    <div className="absolute top-0 bottom-0 right-[15px] w-[2px] bg-muted z-0"></div>
+                    <div className={`absolute top-0 bottom-0 ${lang === "ar" ? "right-[15px]" : "left-[15px]"} w-[2px] bg-muted z-0`}></div>
                     
                     <div className="relative z-10 flex gap-4 mb-6">
                       <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0">
                         <CheckCircle2 className="h-5 w-5" />
                       </div>
                       <div className="pt-1">
-                        <p className="font-bold">تم استلام الطلب</p>
-                        <p className="text-xs text-muted-foreground mt-1">في انتظار المراجعة</p>
+                        <p className="font-bold">{lang === "ar" ? "تم استلام الطلب" : "Order Received"}</p>
+                        <p className="text-xs text-muted-foreground mt-1">{lang === "ar" ? "في انتظار المراجعة" : "Pending Review"}</p>
                       </div>
                     </div>
 
@@ -120,10 +122,14 @@ export default function TrackOrder() {
                       </div>
                       <div className="pt-1">
                         <p className={`font-bold ${order.status === 'completed' ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                          {order.status === 'completed' ? 'تم التجهيز والشحن' : 'قيد التجهيز / المراجعة'}
+                          {order.status === 'completed' 
+                            ? (lang === "ar" ? 'تم التجهيز والشحن' : 'Shipped') 
+                            : (lang === "ar" ? 'قيد التجهيز / المراجعة' : 'Processing / Reviewing')}
                         </p>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {order.status === 'completed' ? 'طلبك في الطريق إليك!' : 'سيتم التواصل معك لتأكيد الشحن.'}
+                          {order.status === 'completed' 
+                            ? (lang === "ar" ? 'طلبك في الطريق إليك!' : 'Your order is on the way!') 
+                            : (lang === "ar" ? 'سيتم التواصل معك لتأكيد الشحن.' : 'You will be contacted to confirm shipping.')}
                         </p>
                       </div>
                     </div>
@@ -132,12 +138,12 @@ export default function TrackOrder() {
 
                 <div className="bg-muted/50 rounded-lg p-4">
                   <div className="flex justify-between items-center text-sm font-semibold mb-2">
-                    <span>الإجمالي:</span>
-                    <span>{order.total.toLocaleString("ar-EG")} ج.م</span>
+                    <span>{lang === "ar" ? "الإجمالي:" : "Total:"}</span>
+                    <span dir="ltr">{order.total.toLocaleString("ar-EG")} {lang === "ar" ? "ج.م" : "EGP"}</span>
                   </div>
                   <div className="flex justify-between items-center text-sm">
-                    <span className="text-muted-foreground">طريقة الدفع:</span>
-                    <span>{order.paymentMethod === 'cod' ? 'عند الاستلام' : 'أونلاين (كاش)'}</span>
+                    <span className="text-muted-foreground">{lang === "ar" ? "طريقة الدفع:" : "Payment:"}</span>
+                    <span>{order.paymentMethod === 'cod' ? (lang === "ar" ? 'عند الاستلام' : 'COD') : (lang === "ar" ? 'أونلاين (كاش)' : 'Online')}</span>
                   </div>
                 </div>
               </div>

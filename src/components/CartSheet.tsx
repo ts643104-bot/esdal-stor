@@ -10,43 +10,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ShoppingCart, Trash2, MessageCircle, ShieldCheck, Copy, Plus, Minus, CheckCircle, CalendarIcon } from "lucide-react";
+import { ShoppingCart, Trash2, MessageCircle, ShieldCheck, Copy, Plus, Minus, CheckCircle, CalendarIcon, User, Image as ImageIcon } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { MapPicker } from "@/components/MapPicker";
 import { useCart } from "@/contexts/CartContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { useLanguage } from "@/contexts/LanguageContext";
 import { toast } from "sonner";
+import { EGYPT_GOVERNORATES } from "@/lib/constants";
+import { hasFirebase, storage } from "@/lib/firebase";
 
 const WHATSAPP_PHONE_E164 = "201122310891";
 const VODAFONE_CASH_NUMBER = "01140971703";
-
-const EGYPT_GOVERNORATES = [
-  { name: "القاهرة", cost: 50 },
-  { name: "الجيزة", cost: 50 },
-  { name: "الإسكندرية", cost: 60 },
-  { name: "القليوبية", cost: 70 },
-  { name: "الدقهلية", cost: 70 },
-  { name: "الشرقية", cost: 70 },
-  { name: "الغربية", cost: 70 },
-  { name: "المنوفية", cost: 70 },
-  { name: "البحيرة", cost: 70 },
-  { name: "كفر الشيخ", cost: 70 },
-  { name: "دمياط", cost: 70 },
-  { name: "بورسعيد", cost: 70 },
-  { name: "الإسماعيلية", cost: 70 },
-  { name: "السويس", cost: 70 },
-  { name: "الفيوم", cost: 90 },
-  { name: "بني سويف", cost: 90 },
-  { name: "المنيا", cost: 90 },
-  { name: "أسيوط", cost: 100 },
-  { name: "سوهاج", cost: 100 },
-  { name: "قنا", cost: 100 },
-  { name: "الأقصر", cost: 100 },
-  { name: "أسوان", cost: 100 },
-  { name: "البحر الأحمر", cost: 120 },
-  { name: "الوادي الجديد", cost: 120 },
-  { name: "مطروح", cost: 120 },
-  { name: "شمال سيناء", cost: 120 },
-  { name: "جنوب سيناء", cost: 120 },
-];
 
 function buildWhatsappMessage(
   items: ReturnType<typeof useCart>["items"],
@@ -62,12 +37,17 @@ function buildWhatsappMessage(
   governorate: string,
   preferredTime: string,
   preferredDate: string,
-  orderId: string
+  orderId: string,
+  note?: string,
+  receiptUrl?: string,
+  transferredAmount?: number | "",
+  onlinePaymentMode?: "full" | "partial",
+  depositAmount?: number
 ) {
-  const paymentText = paymentMethod === "cod" ? "الدفع عند الاستلام (COD)" : "فودافون كاش / إنستاباي";
+  const paymentText = paymentMethod === "cod" ? "الدفع عند الاستلام (COD)" : `أونلاين (${onlinePaymentMode === "partial" ? "عربون: " + (depositAmount || 0) + " ج.م" : "المبلغ بالكامل"})`;
   
   const lines = [
-    "السلام عليكم، عايز/ة أعمل طلب من Esdal Store:",
+    "السلام عليكم، عايز/ة أعمل طلب من هلا اليسر:",
     `رقم الطلب (للمتابعة): *#${orderId}*`,
     "",
     `الاسم: *${customerName}*`,
@@ -76,6 +56,7 @@ function buildWhatsappMessage(
     `العنوان: *${customerAddress}*`,
     `تاريخ التوصيل: *${preferredDate || "أي يوم"}*`,
     `وقت التوصيل المفضل: *${preferredTime}*`,
+    ...(note ? [`ملاحظة العميل: _${note}_`] : []),
     "",
     "الطلبات:",
     ...items.map(
@@ -92,8 +73,15 @@ function buildWhatsappMessage(
 
   if (paymentMethod === "online") {
     lines.push(`رقم المحفظة المُرسِل: ${senderPhone}`);
+    if (transferredAmount) {
+      lines.push(`المبلغ المحول: ${transferredAmount} ج.م`);
+    }
+    if (receiptUrl) {
+      lines.push(`رابط إيصال الدفع: ${receiptUrl}`);
+    }
     lines.push("");
-    lines.push("ملاحظة: سأقوم بإرسال صورة إيصال التحويل (Screenshot) لتأكيد الدفع.");
+    lines.push("*هام جداً:* لقد قمت برفع صورة الإيصال، وهذا هو الرابط للمراجعة: " + receiptUrl);
+    lines.push("سأقوم الآن بإرسال صورة الإيصال هنا في الدردشة أيضاً للتأكيد.");
   } else {
     lines.push("");
     lines.push("رجاءً تأكيد التوفر وسعر الشحن.");
@@ -104,7 +92,10 @@ function buildWhatsappMessage(
 
 export default function CartSheet() {
   const cart = useCart();
+  const { user, profile } = useAuth();
+  const { t, lang } = useLanguage();
   const [paymentMethod, setPaymentMethod] = useState<"cod" | "online">("cod");
+  const [onlinePaymentMode, setOnlinePaymentMode] = useState<"full" | "partial">("full");
   const [senderPhone, setSenderPhone] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -112,46 +103,123 @@ export default function CartSheet() {
   const [governorate, setGovernorate] = useState("");
   const [preferredTime, setPreferredTime] = useState("أي وقت");
   const [preferredDate, setPreferredDate] = useState<Date | undefined>(undefined);
-  const [successData, setSuccessData] = useState<{ orderId: string; waUrl: string } | null>(null);
+  const [shippingType, setShippingType] = useState<"standard" | "express">("standard");
+  const [successData, setSuccessData] = useState<{ 
+    orderId: string; 
+    waUrl: string;
+    details: {
+      name: string;
+      phone: string;
+      items: any[];
+      total: number;
+    }
+  } | null>(null);
   const [discountPct, setDiscountPct] = useState(0);
+  const [depositAmount, setDepositAmount] = useState(100);
+  const [useLoyaltyPoints, setUseLoyaltyPoints] = useState(false);
+  const [orderNote, setOrderNote] = useState("");
+  const [promoCode, setPromoCode] = useState("");
+  const [appliedPromo, setAppliedPromo] = useState<{code: string; discount: number} | null>(null);
+  const [promoError, setPromoError] = useState("");
+  const [receiptUrl, setReceiptUrl] = useState("");
+  const [transferredAmount, setTransferredAmount] = useState<number | "">("");
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
+
+  useEffect(() => {
+    if (profile) {
+      if (profile.name) setCustomerName(profile.name);
+      if (profile.phone) setCustomerPhone(profile.phone);
+      if (profile.address) setCustomerAddress(profile.address);
+      if (profile.governorate) setGovernorate(profile.governorate);
+    }
+  }, [profile]);
 
   useEffect(() => {
     import("@/lib/db").then(({ db }) => {
-      db.getSettings().then(s => setDiscountPct(s.discountPercentage || 0));
+      db.getSettings().then(s => {
+        setDiscountPct(s.discountPercentage || 0);
+        if (s.depositAmount) setDepositAmount(s.depositAmount);
+      });
     });
   }, []);
 
   const isValidInfo = customerName.trim().length > 1 && customerAddress.trim().length > 5 && customerPhone.trim().length >= 10 && governorate !== "";
 
   const selectedGov = EGYPT_GOVERNORATES.find(g => g.name === governorate);
-  const shippingCost = selectedGov ? selectedGov.cost : 0;
-  const discountAmount = Math.round((cart.totalPrice * discountPct) / 100);
-  const finalTotal = cart.totalPrice - discountAmount + shippingCost;
-  const isValidOnline = paymentMethod === "cod" || (senderPhone.length >= 10 && senderPhone.startsWith("01"));
+  const shippingCost = selectedGov ? selectedGov.cost + (shippingType === "express" ? 30 : 0) : 0;
+  
+  const totalEarnedPoints = profile?.totalEarnedPoints || 0;
+  let tierDiscountPct = 0;
+  let currentTierName = "";
+  if (totalEarnedPoints >= 2000) {
+    tierDiscountPct = 10;
+    currentTierName = t("tier.gold" as any) || "ذهبي";
+  } else if (totalEarnedPoints >= 500) {
+    tierDiscountPct = 5;
+    currentTierName = t("tier.silver" as any) || "فضي";
+  } else {
+    tierDiscountPct = 0;
+    currentTierName = t("tier.bronze" as any) || "برونزي";
+  }
+  
+  const tierDiscountAmount = Math.round((cart.totalPrice * tierDiscountPct) / 100);
+  const baseDiscountAmount = Math.round((cart.totalPrice * discountPct) / 100);
+  
+  const userPoints = profile?.loyaltyPoints || 0;
+  const maxPointsToRedeem = Math.floor(userPoints / 500) * 500;
+  const pointsDiscount = useLoyaltyPoints ? Math.floor(maxPointsToRedeem / 50) : 0;
+  const promoDiscountAmount = appliedPromo ? Math.round((cart.totalPrice * appliedPromo.discount) / 100) : 0;
+  const totalDiscount = baseDiscountAmount + pointsDiscount + tierDiscountAmount + promoDiscountAmount;
 
-  const isFormValid = isValidInfo && isValidOnline;
+  const finalTotal = Math.max(0, cart.totalPrice - totalDiscount + shippingCost);
+  const isValidOnline = paymentMethod === "cod" || (senderPhone.length >= 10 && senderPhone.startsWith("01") && receiptUrl && transferredAmount !== "");
+  
+  const pointsEarned = Math.floor(cart.totalPrice / 10);
 
   const handleCheckout = () => {
+    if (!user) {
+      window.location.href = "#/profile";
+      return;
+    }
     if (!isValidInfo) {
       toast.error("يرجى إكمال جميع بيانات التوصيل واختيار المحافظة");
       return;
     }
-    if (paymentMethod === "online" && !isValidOnline) {
-      toast.error("يرجى إدخال رقم هاتف صحيح يبدأ بـ 01 للتحويل");
+    if (paymentMethod === "online") {
+      if (!senderPhone || senderPhone.length < 10 || !senderPhone.startsWith("01")) {
+        toast.error("يرجى إدخال رقم محفظة صحيح يبدأ بـ 01");
+        return;
+      }
+      if (!receiptUrl) {
+        toast.error("يرجى إرفاق سكرين شوت (صورة) للتحويل");
+        return;
+      }
+      if (transferredAmount === "") {
+        toast.error("يرجى إدخال المبلغ الذي قمت بتحويله");
+        return;
+      }
+    }
+    if (uploadingReceipt) {
+      toast.error("يرجى الانتظار حتى اكتمال رفع الإيصال");
       return;
     }
 
     import("@/lib/db").then(async ({ db }) => {
       const dateStr = preferredDate ? preferredDate.toLocaleDateString("ar-EG", { dateStyle: "long" }) : "أي يوم";
-      const orderId = await db.addOrder(cart.items, finalTotal, paymentMethod, senderPhone, customerName, customerAddress, customerPhone, governorate, shippingCost, preferredTime, discountAmount, dateStr);
-      const msg = buildWhatsappMessage(cart.items, cart.totalPrice, shippingCost, discountAmount, finalTotal, paymentMethod, senderPhone, customerName, customerAddress, customerPhone, governorate, preferredTime, dateStr, orderId);
-      const encoded = encodeURIComponent(msg);
-      const waUrl = `https://wa.me/${WHATSAPP_PHONE_E164}?text=${encoded}`;
-
-      // Send email via FormSubmit
+      const promoText = appliedPromo ? ` [كوبون: ${appliedPromo.code}]` : "";
+      const pointsToRedeem = useLoyaltyPoints ? maxPointsToRedeem : 0;
+      
+      const orderId = await db.addOrder(
+        cart.items, finalTotal, paymentMethod, senderPhone, customerName, 
+        customerAddress, customerPhone, governorate, shippingCost, 
+        `${shippingType === "express" ? "[Express] " : ""}${preferredTime}${promoText}`, 
+        totalDiscount, dateStr, user?.uid, pointsEarned, pointsToRedeem, receiptUrl, orderNote, Number(transferredAmount) || undefined,
+        paymentMethod === "online" ? onlinePaymentMode : undefined
+      );
+      
       const itemsList = cart.items.map(it => `${it.qty}x ${it.product.name} (${it.product.price_egp} ج.م)`).join("\n");
       const emailBody = {
-        _subject: `طلب جديد من متجر إسدال - رقم #${orderId}`,
+        _subject: `طلب جديد من هلا اليسر - رقم #${orderId}`,
         "رقم الطلب": orderId,
         "اسم العميل": customerName,
         "رقم التواصل": customerPhone,
@@ -159,24 +227,31 @@ export default function CartSheet() {
         "العنوان ورابط الموقع": customerAddress,
         "تاريخ التوصيل": dateStr,
         "وقت التوصيل": preferredTime,
-        "طريقة الدفع": paymentMethod === "cod" ? "عند الاستلام" : "أونلاين (كاش) - رقم: " + senderPhone,
+        "طريقة الدفع": paymentMethod === "cod" ? "عند الاستلام" : `أونلاين (${onlinePaymentMode === "full" ? "المبلغ بالكامل" : "جزء كعربون والباقي عند الاستلام"}) - رقم: ` + senderPhone,
         "المنتجات": itemsList,
         "قيمة المنتجات": cart.totalPrice + " ج.م",
-        "الخصم": discountAmount > 0 ? discountAmount + " ج.م" : "لا يوجد",
+        "الخصم": totalDiscount > 0 ? totalDiscount + " ج.م" : "لا يوجد",
         "مصاريف الشحن": shippingCost + " ج.م",
         "الإجمالي الكلي": finalTotal + " ج.م",
+        "المبلغ المحول (المُدخل)": transferredAmount ? transferredAmount + " ج.م" : "لا يوجد",
+        "رابط الإيصال": receiptUrl || "لا يوجد"
       };
 
       fetch("https://formsubmit.co/ajax/tkalikrombo@gmail.com", {
         method: "POST",
-        headers: { 
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify(emailBody)
       }).catch(err => console.error("Failed to send email notification", err));
       
-      setSuccessData({ orderId, waUrl });
+      const waMsg = buildWhatsappMessage(cart.items, cart.totalPrice, shippingCost, totalDiscount, finalTotal, paymentMethod, senderPhone, customerName, customerAddress, customerPhone, governorate, `${shippingType === "express" ? "[Express] " : ""}${preferredTime}`, dateStr, orderId, orderNote, receiptUrl, transferredAmount, onlinePaymentMode, depositAmount);
+      const waUrl = `https://wa.me/${WHATSAPP_PHONE_E164}?text=${encodeURIComponent(waMsg)}`;
+      
+      setSuccessData({ 
+        orderId, waUrl,
+        details: { name: customerName, phone: customerPhone, items: [...cart.items], total: finalTotal }
+      });
+      
+      setTimeout(() => { window.open(waUrl, "_blank"); }, 600);
       cart.clear();
     });
   };
@@ -184,6 +259,49 @@ export default function CartSheet() {
   const copyNumber = () => {
     navigator.clipboard.writeText(VODAFONE_CASH_NUMBER);
     toast.success("تم نسخ رقم فودافون كاش");
+  };
+
+  const handleReceiptUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("الصورة كبيرة جداً. يرجى اختيار صورة أقل من 5 ميجابايت");
+      return;
+    }
+
+
+    const apiUrl = import.meta.env.VITE_IMGBB_API_URL="https://api.imgbb.com/1/upload"
+    const apiKey = import.meta.env.VITE_IMGBB_API_KEY="c517290f9573727f0188b26c07b3ecbf"
+
+    if (!apiUrl || !apiKey) {
+      toast.error("عذراً، خدمة رفع الصور غير متوفرة حالياً");
+      return;
+    }
+
+    setUploadingReceipt(true);
+    const toastId = toast.loading("جاري رفع صورة الإيصال...");
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      
+      const response = await fetch(`${apiUrl}?key=${apiKey}`, {
+        method: "POST",
+        body: formData
+      });
+      
+      const data = await response.json();
+      if (data.success) {
+        setReceiptUrl(data.data.url);
+        toast.success("تم إرفاق صورة الإيصال بنجاح", { id: toastId });
+      } else {
+        throw new Error(data.error?.message || "فشل الرفع");
+      }
+    } catch (err: any) {
+      toast.error("فشل رفع الصورة: " + err.message, { id: toastId });
+    } finally {
+      setUploadingReceipt(false);
+    }
   };
 
   const handleMapLocation = (link: string, detectedGov?: string) => {
@@ -207,33 +325,58 @@ export default function CartSheet() {
       </SheetTrigger>
       <SheetContent side="left" className="w-full sm:max-w-md flex flex-col h-full">
         {successData ? (
-          <div className="flex flex-col items-center justify-center h-full text-center space-y-6 animate-in zoom-in duration-500 py-10">
-            <div className="h-20 w-20 bg-green-500/20 text-green-600 rounded-full flex items-center justify-center">
-              <CheckCircle className="h-10 w-10" />
-            </div>
-            
-            <div className="space-y-2">
-              <h2 className="text-2xl font-bold font-display text-foreground">تم تسجيل طلبك بنجاح! 🎉</h2>
-              <p className="text-muted-foreground text-sm">
-                تم حفظ بياناتك وتجهيز رسالة الواتساب الخاصة بك.
-              </p>
+          <div className="flex flex-col h-full animate-in slide-in-from-left duration-500">
+            <div className="flex-1 overflow-y-auto space-y-6 py-6 px-1 no-scrollbar">
+              <div className="text-center space-y-3">
+                <div className="mx-auto h-16 w-16 bg-green-500/20 text-green-600 rounded-full flex items-center justify-center shadow-lg shadow-green-500/10">
+                  <CheckCircle className="h-8 w-8" />
+                </div>
+                <h2 className="text-2xl font-black font-display text-foreground">تم تسجيل طلبك! 🎉</h2>
+                <p className="text-muted-foreground text-xs font-bold px-4">
+                  برجاء مراجعة تفاصيل طلبك والضغط على الزر بالأسفل لإرساله عبر الواتساب.
+                </p>
+              </div>
+
+              <div className="bg-muted/30 border border-border/40 rounded-3xl overflow-hidden shadow-xl">
+                <div className="bg-primary/10 p-4 border-b border-border/40 flex justify-between items-center">
+                  <span className="text-xs font-black text-primary">رقم الطلب: #{successData.orderId}</span>
+                  <Badge className="bg-primary text-primary-foreground font-mono">#{successData.orderId.substring(0,4)}</Badge>
+                </div>
+                <div className="p-5 space-y-4">
+                   <div className="space-y-3 pb-4 border-b border-border/20">
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-muted-foreground">الاسم:</span>
+                        <span className="font-bold text-foreground">{successData.details.name}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-muted-foreground">الهاتف:</span>
+                        <span className="font-bold font-mono text-foreground">{successData.details.phone}</span>
+                      </div>
+                   </div>
+                   <div className="space-y-3">
+                      <span className="text-[10px] font-black uppercase text-muted-foreground block">المنتجات المختارة:</span>
+                      {successData.details.items.map((it, idx) => (
+                        <div key={idx} className="flex justify-between items-center text-sm bg-background/50 p-2 rounded-xl">
+                           <span className="font-medium">{it.qty}x {it.product.name}</span>
+                           <span className="font-bold text-primary">{(it.qty * it.product.price_egp).toLocaleString()} ج.م</span>
+                        </div>
+                      ))}
+                   </div>
+                   <div className="pt-4 border-t border-border/40 flex justify-between items-center">
+                      <span className="font-black text-lg">الإجمالي الكلي:</span>
+                      <span className="text-2xl font-black text-primary">{successData.details.total.toLocaleString()} ج.م</span>
+                   </div>
+                </div>
+              </div>
             </div>
 
-            <div className="bg-secondary/50 rounded-xl p-6 w-full space-y-2">
-              <p className="text-sm text-muted-foreground font-semibold">رقم الطلب الخاص بك</p>
-              <div className="text-3xl font-mono font-bold tracking-wider text-primary">#{successData.orderId}</div>
-              <p className="text-xs text-muted-foreground mt-2">
-                احتفظ بهذا الرقم لتتمكن من تتبع حالة شحنتك لاحقاً.
-              </p>
-            </div>
-
-            <div className="space-y-3 w-full pt-4 mt-auto">
-              <Button 
-                onClick={() => window.open(successData.waUrl, "_blank")} 
-                className="w-full h-12 text-md gap-2"
-              >
-                <MessageCircle className="h-5 w-5" />
-                إرسال الرسالة لتأكيد الطلب 
+            <div className="pt-4 border-t bg-background mt-auto pb-6 space-y-3">
+              <Button onClick={() => window.open(successData.waUrl, "_blank")} className="w-full h-14 text-lg font-bold gap-3 rounded-2xl bg-[#25D366] hover:bg-[#20ba56] text-white shadow-xl shadow-green-500/20">
+                <MessageCircle className="h-6 w-6" />
+                إرسال الطلب عبر واتساب 
+              </Button>
+              <Button variant="ghost" onClick={() => { setSuccessData(null); window.location.href = "#/"; }} className="w-full text-muted-foreground font-bold h-10">
+                العودة للتسوق
               </Button>
             </div>
           </div>
@@ -243,247 +386,216 @@ export default function CartSheet() {
               <SheetTitle className="font-display">سلة المشتريات</SheetTitle>
             </SheetHeader>
 
-            <div className="mt-6 flex-1 overflow-y-auto pr-2">
+            <div className="mt-6 flex-1 overflow-y-auto pr-2 no-scrollbar">
               {cart.items.length === 0 ? (
-            <div className="text-muted-foreground text-center mt-10">السلة فاضية… اختار/ي منتجات وارجع/ي هنا.</div>
-          ) : (
-            <div className="space-y-6 pb-6">
-              {/* Items List */}
-              <div className="space-y-4">
-                {cart.items.map((it) => (
-                  <div key={it.product.id} className="flex gap-3">
-                    <img
-                      src={it.product.image_url}
-                      alt={it.product.name}
-                      className="h-20 w-20 rounded-lg object-cover border"
-                    />
-                    <div className="flex-1 flex flex-col justify-between py-1">
-                      <div>
-                        <div className="font-semibold leading-snug">{it.product.name}</div>
-                        <div className="text-sm font-bold text-primary mt-1">
-                          {(it.qty * it.product.price_egp).toLocaleString("ar-EG")} ج.م
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center justify-between mt-2">
-                        <div className="flex items-center gap-3 bg-secondary rounded-lg px-2 py-1">
-                          <button onClick={() => cart.dec(it.product.id)} className="p-1 hover:bg-background rounded text-muted-foreground">
-                            <Minus className="h-3 w-3" />
-                          </button>
-                          <span className="text-sm font-semibold min-w-4 text-center">{it.qty}</span>
-                          <button onClick={() => cart.add(it.product)} className="p-1 hover:bg-background rounded text-foreground">
-                            <Plus className="h-3 w-3" />
-                          </button>
-                        </div>
-                        <Button size="icon" variant="ghost" onClick={() => cart.remove(it.product.id)} className="h-8 w-8 text-muted-foreground hover:text-destructive">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <Separator />
-
-              {/* Total */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between text-sm">
-                  <div className="text-muted-foreground font-medium">قيمة المنتجات</div>
-                  <div className="font-semibold">{cart.totalPrice.toLocaleString("ar-EG")} ج.م</div>
-                </div>
-                {discountAmount > 0 && (
-                  <div className="flex items-center justify-between text-sm text-green-600 dark:text-green-400">
-                    <div className="font-medium">خصم المتجر ({discountPct}%)</div>
-                    <div className="font-bold">-{discountAmount.toLocaleString("ar-EG")} ج.م</div>
-                  </div>
-                )}
-                {governorate && (
-                  <div className="flex items-center justify-between text-sm">
-                    <div className="text-muted-foreground font-medium">مصاريف الشحن ({governorate})</div>
-                    <div className="font-semibold">{shippingCost.toLocaleString("ar-EG")} ج.م</div>
-                  </div>
-                )}
-                <div className="flex items-center justify-between mt-2 pt-2 border-t">
-                  <div className="text-foreground font-bold">الإجمالي الكلي</div>
-                  <div className="font-display text-xl text-primary">{finalTotal.toLocaleString("ar-EG")} ج.م</div>
-                </div>
-              </div>
-
-              <Separator />
-              
-              {/* Customer Info */}
-              <div className="space-y-4">
-                <Label className="text-base font-semibold">بيانات التوصيل</Label>
-                <div className="space-y-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="customerName" className="text-xs text-muted-foreground">الاسم بالكامل</Label>
-                    <Input 
-                      id="customerName" 
-                      placeholder="مثال: أحمد محمد" 
-                      value={customerName}
-                      onChange={(e) => setCustomerName(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="customerPhone" className="text-xs text-muted-foreground">رقم التواصل</Label>
-                    <Input 
-                      id="customerPhone" 
-                      type="tel"
-                      placeholder="مثال: 01xxxxxxxxx" 
-                      value={customerPhone}
-                      onChange={(e) => setCustomerPhone(e.target.value)}
-                      dir="ltr"
-                      className="text-right"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">المحافظة</Label>
-                    <Select value={governorate} onValueChange={setGovernorate} dir="rtl">
-                      <SelectTrigger>
-                        <SelectValue placeholder="اختر المحافظة لمعرفة الشحن" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {EGYPT_GOVERNORATES.map(gov => (
-                          <SelectItem key={gov.name} value={gov.name}>
-                            {gov.name} ({gov.cost} ج.م)
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="customerAddress" className="text-xs text-muted-foreground">العنوان بالتفصيل (المنطقة، الشارع، العمارة)</Label>
-                    <Textarea 
-                      id="customerAddress" 
-                      placeholder="مثال: القاهرة، مدينة نصر، شارع مكرم عبيد..." 
-                      value={customerAddress}
-                      onChange={(e) => setCustomerAddress(e.target.value)}
-                      className="resize-none h-20"
-                    />
-                    <MapPicker onLocationSelect={handleMapLocation} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">تاريخ التوصيل (اختياري)</Label>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button variant="outline" className={`w-full justify-start text-right font-normal ${!preferredDate && "text-muted-foreground"}`}>
-                          <CalendarIcon className="ml-2 h-4 w-4" />
-                          {preferredDate ? preferredDate.toLocaleDateString("ar-EG", { dateStyle: "long" }) : "اختر تاريخ التوصيل"}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
-                        <Calendar
-                          mode="single"
-                          selected={preferredDate}
-                          onSelect={setPreferredDate}
-                          initialFocus
-                          dir="ltr"
-                          disabled={(date) => date < new Date(new Date().setHours(0, 0, 0, 0))}
-                        />
-                      </PopoverContent>
-                    </Popover>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">وقت التوصيل المفضل</Label>
-                    <Select value={preferredTime} onValueChange={setPreferredTime} dir="rtl">
-                      <SelectTrigger>
-                        <SelectValue placeholder="اختر الوقت المفضل" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="أي وقت">أي وقت (أسرع توصيل)</SelectItem>
-                        <SelectItem value="صباحاً (10 ص - 2 م)">صباحاً (10 ص - 2 م)</SelectItem>
-                        <SelectItem value="عصراً (2 م - 6 م)">عصراً (2 م - 6 م)</SelectItem>
-                        <SelectItem value="مساءً (6 م - 10 م)">مساءً (6 م - 10 م)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-
-              <Separator />
-
-              {/* Payment Methods */}
-              <div className="space-y-4">
-                <Label className="text-base font-semibold">طريقة الدفع</Label>
-                <RadioGroup 
-                  value={paymentMethod} 
-                  onValueChange={(val) => setPaymentMethod(val as "cod" | "online")}
-                  className="gap-3"
-                >
-                  <div className={`flex items-center space-x-2 rtl:space-x-reverse rounded-xl border p-4 transition-colors ${paymentMethod === "cod" ? "border-primary bg-primary/5" : "border-border bg-card/50"}`}>
-                    <RadioGroupItem value="cod" id="cod" />
-                    <Label htmlFor="cod" className="flex-1 cursor-pointer font-medium">الدفع عند الاستلام (COD)</Label>
-                  </div>
-                  
-                  <div className={`flex flex-col gap-3 rounded-xl border p-4 transition-colors ${paymentMethod === "online" ? "border-primary bg-primary/5" : "border-border bg-card/50"}`}>
-                    <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                      <RadioGroupItem value="online" id="online" />
-                      <Label htmlFor="online" className="flex-1 cursor-pointer font-medium">دفع أونلاين (فودافون كاش / إنستاباي)</Label>
-                    </div>
-                    
-                    {paymentMethod === "online" && (
-                      <div className="pl-6 rtl:pr-6 space-y-4 animate-in fade-in slide-in-from-top-2">
-                        <div className="bg-background rounded-lg p-3 border border-primary/20 flex flex-col gap-2">
-                          <p className="text-sm text-muted-foreground leading-relaxed">
-                            قم بتحويل <strong className="text-foreground">{finalTotal.toLocaleString("ar-EG")} ج.م</strong> إلى الرقم التالي:
-                          </p>
-                          <div className="flex items-center gap-2">
-                            <code className="bg-muted px-2 py-1 rounded text-lg font-bold flex-1 text-center tracking-widest">
-                              {VODAFONE_CASH_NUMBER}
-                            </code>
-                            <Button size="icon" variant="outline" onClick={copyNumber}>
-                              <Copy className="h-4 w-4" />
-                            </Button>
+                <div className="text-muted-foreground text-center mt-10">السلة فاضية… اختار/ي منتجات وارجع/ي هنا.</div>
+              ) : (
+                <div className="space-y-6 pb-6">
+                  <div className="space-y-4">
+                    {cart.items.map((it) => (
+                      <div key={it.product.id} className="flex items-start gap-4 p-2 rounded-xl bg-muted/20 border border-border/30">
+                        {it.product.image_url ? (
+                          <img src={it.product.image_url} alt={it.product.name} className="h-20 w-20 rounded-lg object-cover border-none" />
+                        ) : (
+                          <div className="h-20 w-20 bg-muted/40 rounded-lg flex items-center justify-center border border-dashed border-border/60">
+                            <span className="text-[10px] font-black text-primary/40 italic">قريباً..</span>
+                          </div>
+                        )}
+                        <div className="flex-1 flex flex-col justify-between min-h-[80px]">
+                          <div>
+                            <div className="font-semibold leading-snug">{it.product.name}</div>
+                            <div className="text-sm font-bold text-primary mt-1">{(it.qty * it.product.price_egp).toLocaleString("ar-EG")} ج.م</div>
+                          </div>
+                          <div className="flex items-center justify-between mt-1">
+                            <div className="flex items-center gap-2 bg-background/50 rounded-lg p-0.5 border border-border/60">
+                              <Button size="icon" variant="ghost" onClick={() => cart.dec(it.product.id)} className="h-8 w-8 text-muted-foreground"><Minus className="h-4 w-4" /></Button>
+                              <span className="text-sm font-bold min-w-6 text-center">{it.qty}</span>
+                              <Button size="icon" variant="ghost" onClick={() => cart.add(it.product)} className="h-8 w-8 text-primary"><Plus className="h-4 w-4" /></Button>
+                            </div>
+                            <Button size="icon" variant="ghost" onClick={() => cart.remove(it.product.id)} className="h-9 w-9 text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
                           </div>
                         </div>
+                      </div>
+                    ))}
+                  </div>
 
-                        <div className="space-y-2">
-                          <Label htmlFor="senderPhone" className="text-sm text-muted-foreground">رقم الهاتف المُرسل منه (للتأكيد)</Label>
-                          <Input 
-                            id="senderPhone" 
-                            type="tel" 
-                            placeholder="مثال: 01xxxxxxxxx" 
-                            value={senderPhone}
-                            onChange={(e) => setSenderPhone(e.target.value)}
-                            dir="ltr"
-                            className="text-right"
-                          />
-                        </div>
+                  <Separator />
 
-                        <div className="flex gap-2 text-xs text-primary bg-primary/10 p-2 rounded-lg items-start">
-                          <ShieldCheck className="h-4 w-4 shrink-0 mt-0.5" />
-                          <p>
-                            طريقة آمنة 100%. لن يتم تجهيز الطلب إلا بعد التأكد من وصول المبلغ للمحفظة. يرجى إرفاق صورة التحويل في الواتساب.
-                          </p>
-                        </div>
+                  <div className="space-y-3 text-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="text-muted-foreground font-medium">قيمة المنتجات</div>
+                      <div className="font-semibold">{cart.totalPrice.toLocaleString("ar-EG")} ج.م</div>
+                    </div>
+                    {baseDiscountAmount > 0 && (
+                      <div className="flex items-center justify-between text-green-600 dark:text-green-400 font-bold">
+                        <div>خصم المتجر ({discountPct}%)</div>
+                        <div>-{baseDiscountAmount.toLocaleString("ar-EG")} ج.م</div>
                       </div>
                     )}
-                  </div>
-                </RadioGroup>
-              </div>
-            </div>
-          )}
-        </div>
+                    {tierDiscountAmount > 0 && (
+                      <div className="flex items-center justify-between text-green-600 dark:text-green-400 font-bold">
+                        <div>خصم المستوى ({currentTierName})</div>
+                        <div>-{tierDiscountAmount.toLocaleString("ar-EG")} ج.م</div>
+                      </div>
+                    )}
+                    {userPoints >= 100 && (
+                      <div className="bg-primary/5 p-3 rounded-xl border border-primary/20 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor="useLoyalty" className="font-semibold text-xs cursor-pointer flex-1">استخدام نقاط الولاء</Label>
+                          <Switch id="useLoyalty" checked={useLoyaltyPoints} onCheckedChange={setUseLoyaltyPoints} />
+                        </div>
+                        {useLoyaltyPoints && (
+                          <div className="flex items-center justify-between text-xs text-green-600 font-bold">
+                            <span>خصم النقاط:</span>
+                            <span>-{pointsDiscount.toLocaleString("ar-EG")} ج.م</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
-        {/* Footer Actions */}
-        {cart.items.length > 0 && (
-          <div className="pt-4 border-t bg-background mt-auto pb-4">
-            <div className="grid gap-3">
-              <Button 
-                className="gap-2 h-12 text-md"
-                onClick={handleCheckout}
-                disabled={!isFormValid}
-              >
-                <MessageCircle className="h-5 w-5" />
-                إتمام الطلب عبر واتساب
-              </Button>
-              <Button variant="ghost" className="text-muted-foreground" onClick={() => cart.clear()}>
-                تفريغ السلة
-              </Button>
+                    <div className="flex gap-2">
+                      <Input placeholder="كود الخصم" value={promoCode} onChange={(e) => setPromoCode(e.target.value)} className="h-9" />
+                      <Button variant="secondary" size="sm" onClick={async () => {
+                        const { db } = await import("@/lib/db");
+                        const codes = await db.getPromoCodes();
+                        const match = codes.find(c => c.code.toLowerCase() === promoCode.trim().toLowerCase() && c.isActive);
+                        if (match) { setAppliedPromo({ code: match.code, discount: match.discountPercentage }); toast.success("تم تطبيق الكود"); }
+                        else { setAppliedPromo(null); toast.error("كود غير صحيح"); }
+                      }}>تطبيق</Button>
+                    </div>
+
+                    {governorate && (
+                      <div className="flex items-center justify-between">
+                        <div className="text-muted-foreground font-medium">مصاريف الشحن ({governorate})</div>
+                        <div className="font-semibold">{shippingCost.toLocaleString("ar-EG")} ج.م</div>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between mt-2 pt-2 border-t text-lg font-black">
+                      <div className="text-foreground">الإجمالي الكلي</div>
+                      <div className="text-primary">{finalTotal.toLocaleString("ar-EG")} ج.م</div>
+                    </div>
+                  </div>
+
+                  <Separator />
+
+                  {!user ? (
+                    <div className="bg-primary/5 border-2 border-dashed border-primary/20 rounded-3xl p-8 text-center space-y-5 animate-in fade-in zoom-in">
+                      <div className="mx-auto h-16 w-16 bg-primary/10 text-primary rounded-full flex items-center justify-center"><User className="h-8 w-8" /></div>
+                      <div className="space-y-1">
+                        <h3 className="text-lg font-black text-foreground">سجل دخولك أولاً 🔒</h3>
+                        <p className="text-muted-foreground text-xs font-bold leading-relaxed">يرجى تسجيل الدخول بالبريد الإلكتروني لتتمكن من ملء بيانات التوصيل وإتمام الشراء.</p>
+                      </div>
+                      <Button onClick={() => window.location.href = "#/profile"} className="w-full h-12 font-black rounded-2xl shadow-lg">إنشاء حساب / تسجيل دخول</Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-6 animate-in fade-in duration-500">
+                      <div className="flex items-center gap-2 border-b border-border/40 pb-2">
+                        <div className="h-8 w-1.5 bg-primary rounded-full"></div>
+                        <Label className="text-lg font-bold text-foreground">بيانات التوصيل</Label>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="customerName" className="text-xs font-bold opacity-70">الاسم بالكامل</Label>
+                          <Input id="customerName" value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="rounded-xl h-11" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="customerPhone" className="text-xs font-bold opacity-70">رقم التواصل</Label>
+                          <Input id="customerPhone" type="tel" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} className="rounded-xl h-11 text-right" dir="ltr" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs font-bold opacity-70">المحافظة</Label>
+                          <Select value={governorate} onValueChange={setGovernorate} dir="rtl">
+                            <SelectTrigger className="h-11 rounded-xl"><SelectValue placeholder="اختر المحافظة" /></SelectTrigger>
+                            <SelectContent>
+                              {EGYPT_GOVERNORATES.map(gov => <SelectItem key={gov.name} value={gov.name}>{gov.name} ({gov.cost} ج.م)</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="customerAddress" className="text-xs font-bold opacity-70">العنوان أو رابط الموقع</Label>
+                          <Input id="customerAddress" value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} className="rounded-xl h-11" />
+                          <MapPicker onLocationSelect={handleMapLocation} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="orderNote" className="text-xs font-bold opacity-70">ملاحظات الطلب</Label>
+                          <Textarea id="orderNote" value={orderNote} onChange={(e) => setOrderNote(e.target.value)} className="rounded-xl resize-none h-20" />
+                        </div>
+                      </div>
+
+                      <Separator />
+
+                      <div className="space-y-4">
+                        <Label className="text-lg font-bold">طريقة الدفع</Label>
+                        <RadioGroup value={paymentMethod} onValueChange={(v: any) => setPaymentMethod(v)} className="grid gap-3">
+                          <div className={`flex items-center justify-between p-4 rounded-xl border cursor-pointer transition-colors ${paymentMethod === "cod" ? "bg-primary/5 border-primary" : "bg-card border-border"}`} onClick={() => setPaymentMethod("cod")}>
+                            <div className="flex items-center gap-3"><RadioGroupItem value="cod" id="cod" /><Label htmlFor="cod" className="font-bold cursor-pointer">عند الاستلام</Label></div>
+                          </div>
+                          <div className={`flex flex-col rounded-xl border overflow-hidden cursor-pointer transition-colors ${paymentMethod === "online" ? "bg-primary/5 border-primary" : "bg-card border-border"}`} onClick={() => setPaymentMethod("online")}>
+                            <div className="flex items-center justify-between p-4"><div className="flex items-center gap-3"><RadioGroupItem value="online" id="online" /><Label htmlFor="online" className="font-bold cursor-pointer">فودافون كاش / إنستاباي</Label></div></div>
+                            {paymentMethod === "online" && (
+                              <div className="p-4 bg-muted/10 border-t space-y-4 animate-in slide-in-from-top-2">
+                                <div className="space-y-3 mb-4">
+                                  <Label className="text-xs font-bold opacity-70">نوع الدفع</Label>
+                                  <RadioGroup value={onlinePaymentMode} onValueChange={(v: any) => setOnlinePaymentMode(v)} className="flex flex-col sm:flex-row gap-2">
+                                    <div className={`flex items-center gap-2 border p-3 rounded-lg flex-1 cursor-pointer transition-colors ${onlinePaymentMode === "full" ? "border-primary bg-primary/5" : "bg-background"}`} onClick={() => setOnlinePaymentMode("full")}>
+                                      <RadioGroupItem value="full" id="full_pay" />
+                                      <Label htmlFor="full_pay" className="text-xs cursor-pointer font-bold">دفع المبلغ بالكامل أونلاين</Label>
+                                    </div>
+                                    <div className={`flex items-center gap-2 border p-3 rounded-lg flex-1 cursor-pointer transition-colors ${onlinePaymentMode === "partial" ? "border-primary bg-primary/5" : "bg-background"}`} onClick={() => setOnlinePaymentMode("partial")}>
+                                      <RadioGroupItem value="partial" id="partial_pay" />
+                                      <div className="flex flex-col gap-0.5">
+                                        <Label htmlFor="partial_pay" className="text-xs cursor-pointer font-bold">دفع عربون والباقي عند الاستلام</Label>
+                                        <span className="text-[10px] text-primary font-bold">قيمة العربون: {depositAmount} ج.م</span>
+                                      </div>
+                                    </div>
+                                  </RadioGroup>
+                                </div>
+                                <div className="bg-background p-3 rounded-lg border border-dashed border-primary/40 text-center">
+                                  <p className="text-[10px] font-bold text-muted-foreground mb-1">حول المبلغ إلى الرقم:</p>
+                                  <div className="flex items-center justify-center gap-2">
+                                    <span className="text-lg font-mono font-black text-primary">{VODAFONE_CASH_NUMBER}</span>
+                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={copyNumber}><Copy className="h-4 w-4" /></Button>
+                                  </div>
+                                </div>
+                                <div className="space-y-2">
+                                  <Label className="text-xs font-bold opacity-70">رقم المحفظة المُرسل منه</Label>
+                                  <Input placeholder="01xxxxxxxxx" value={senderPhone} onChange={(e) => setSenderPhone(e.target.value)} className="h-10 text-right" />
+                                </div>
+                                <div className="space-y-2">
+                                  <Label className="text-xs font-bold opacity-70">المبلغ المُحول بالجنيه</Label>
+                                  <Input type="number" placeholder="مثال: 500" value={transferredAmount} onChange={(e) => setTransferredAmount(e.target.value === "" ? "" : Number(e.target.value))} className="h-10 text-right" />
+                                </div>
+                                <div className="space-y-2">
+                                  <Label className="text-xs font-bold opacity-70">إرفاق سكرين شوت التحويل (صورة)</Label>
+                                  <div className="flex items-center gap-4">
+                                    <Input type="file" accept="image/*" onChange={handleReceiptUpload} disabled={uploadingReceipt} className="h-10" />
+                                    {receiptUrl && (
+                                      <img src={receiptUrl} alt="Receipt" className="h-10 w-10 object-cover rounded border" />
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </RadioGroup>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-          </div>
-        )}
+
+            {cart.items.length > 0 && user && (
+              <div className="pt-4 border-t bg-background mt-auto pb-6 px-1">
+                <Button className="w-full h-14 text-lg font-black gap-3 rounded-2xl shadow-xl shadow-primary/20" onClick={handleCheckout} disabled={!isValidInfo}>
+                  <MessageCircle className="h-6 w-6" />
+                  إتمام الطلب عبر واتساب
+                </Button>
+                <Button variant="ghost" className="w-full text-muted-foreground text-xs font-bold mt-2" onClick={() => cart.clear()}>تفريغ السلة</Button>
+              </div>
+            )}
           </>
         )}
       </SheetContent>

@@ -1,0 +1,71 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Security: Check for custom admin claim or specific admin email
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.admin == true || 
+        request.auth.token.email == 'admin@hala-alyusr.com'
+      );
+    }
+
+    function isMoney(x) {
+      return x is number && x >= 0 && x <= 1000000;
+    }
+
+    // -------------------- Products --------------------
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // -------------------- Orders --------------------
+    match /orders/{orderId} {
+      // 🔒 LEAK PREVENTION: Admin can read all. Regular user can ONLY read their own orders.
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+
+      // Anyone authenticated can create an order with strict validation
+      allow create: if isSignedIn()
+        && (request.resource.data.userId == request.auth.uid)
+        && (request.resource.data.status == 'pending');
+
+      // 🔒 DATA INTEGRITY: Only admin can update status (e.g., mark as prepared/shipped) or delete.
+      allow update, delete: if isAdmin();
+    }
+
+    // -------------------- Expenses --------------------
+    match /expenses/{expenseId} {
+      // 🔒 STRICT PRIVACY: Only admin can see financial expenses.
+      allow read, write: if isAdmin();
+    }
+
+    // -------------------- Users --------------------
+    match /users/{uid} {
+      allow read, write: if isAdmin() || (isSignedIn() && request.auth.uid == uid);
+    }
+
+    // -------------------- Settings --------------------
+    match /settings/{docId} {
+      // 🔒 SETTINGS PROTECTION: Everyone reads (for discount display), but ONLY Admin writes.
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // -------------------- Promo Codes --------------------
+    match /promoCodes/{promoId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Default deny for everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
