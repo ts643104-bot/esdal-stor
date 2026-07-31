@@ -11,6 +11,9 @@ export type Product = {
   description?: string;
   stock_quantity?: number;
   sales_count?: number; // For sorting by best selling
+  views_count?: number;
+  rating?: number;
+  rating_count?: number;
 };
 
 export type CartItem = {

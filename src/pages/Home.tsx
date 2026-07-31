@@ -95,7 +95,7 @@ export default function Home({ targetSection }: HomeProps) {
         
         return okCat && okQ && okMin && okMax && okAvailable;
       })
-      .sort((a, b) => (b.sales_count || 0) - (a.sales_count || 0)); // Best Selling First
+      .sort((a, b) => Number(b.in_stock) - Number(a.in_stock) || a.name.localeCompare(b.name));
   }, [products, q, cat, minPrice, maxPrice, onlyAvailable]);
 
   const pagedProducts = useMemo(() => {
@@ -133,9 +133,9 @@ export default function Home({ targetSection }: HomeProps) {
       <header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
         <div className="mx-auto max-w-6xl px-4 py-2 sm:py-3 flex items-center justify-between gap-2">
           {/* Logo & Brand */}
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            <div className="h-9 w-9 sm:h-12 sm:w-12 rounded-xl bg-primary/5 border border-primary/20 overflow-hidden shrink-0 shadow-sm p-0.5">
-              <img src="./logo.png" alt="Logo" className="w-full h-full object-contain rounded-lg" />
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0 group">
+            <div className="h-9 w-9 sm:h-12 sm:w-12 rounded-xl bg-primary/5 border border-primary/20 overflow-hidden shrink-0 shadow-sm p-0.5 transition-transform duration-200">
+              <img src="/logo.png" alt="Hala Al-Yusr" className="w-full h-full object-contain rounded-lg" />
             </div>
             <div className="flex flex-col">
               <div className="font-display text-base sm:text-xl font-bold leading-tight">{t("app.title")}</div>
@@ -218,7 +218,7 @@ export default function Home({ targetSection }: HomeProps) {
               </div>
 
               <div className="mt-6 text-xs text-white/70">
-                مصدر المنتجات: {source === "google" ? "Cloud Sync" : "Local Storage"}
+                {lang === "ar" ? `المصدر: ${source === "google" ? "بيانات متاحة" : "بيانات محلية"}` : `Source: ${source === "google" ? "Available data" : "Local data"}`}
               </div>
             </motion.div>
 
@@ -228,8 +228,8 @@ export default function Home({ targetSection }: HomeProps) {
               transition={{ duration: 1, delay: 0.2 }}
               className="hidden lg:block w-1/2 relative"
             >
-              <div className="relative w-full max-w-[400px] aspect-square mx-auto rounded-full overflow-hidden border border-primary/20 shadow-2xl shadow-primary/20">
-                <img src="./logo.png" alt="Logo" className="w-full h-full object-cover" />
+              <div className="relative w-full max-w-[400px] aspect-square mx-auto rounded-full overflow-hidden border border-primary/20 shadow-2xl shadow-primary/20 ring-offset-background">
+                <img src="/logo.png" alt="Hala Al-Yusr" className="w-full h-full object-cover" />
                 <div className="absolute inset-0 rounded-full ring-1 ring-inset ring-white/10" />
               </div>
             </motion.div>
@@ -320,7 +320,7 @@ export default function Home({ targetSection }: HomeProps) {
 
                       <div className="flex items-center gap-2 pt-2 border-t text-[10px] text-muted-foreground italic">
                         <ArrowDownWideNarrow className="h-3 w-3" />
-                        {lang === "ar" ? "يتم الترتيب آلياً حسب الأكثر مبيعاً" : "Sorted automatically by best selling"}
+                        {lang === "ar" ? "يتم الترتيب بحسب التوفر والاسم" : "Sorted by availability and name"}
                       </div>
                     </div>
                   </PopoverContent>

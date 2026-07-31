@@ -32,7 +32,8 @@
       ]
     },
     "noImplicitAny": false,
-    "strictNullChecks": true
+    "strictNullChecks": true,
+    "ignoreDeprecations": "5.0"
   },
   "include": [
     "src"

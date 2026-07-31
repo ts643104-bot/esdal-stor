@@ -398,7 +398,7 @@ export default function CartSheet() {
                           <img src={it.product.image_url} alt={it.product.name} className="h-20 w-20 rounded-lg object-cover border-none" />
                         ) : (
                           <div className="h-20 w-20 bg-muted/40 rounded-lg flex items-center justify-center border border-dashed border-border/60">
-                            <span className="text-[10px] font-black text-primary/40 italic">قريباً..</span>
+                            <span className="text-[10px] font-black text-primary/40">لا توجد صورة</span>
                           </div>
                         )}
                         <div className="flex-1 flex flex-col justify-between min-h-[80px]">

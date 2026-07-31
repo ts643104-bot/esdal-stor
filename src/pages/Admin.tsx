@@ -555,9 +555,8 @@ export default function Admin() {
     }
 
     const apiUrl = import.meta.env.VITE_IMGBB_API_URL;
-    const apiKey = import.meta.env.VITE_IMGBB_API_KEY;
 
-    if (!apiUrl || !apiKey) {
+    if (!apiUrl || !import.meta.env.VITE_IMGBB_API_KEY) {
       toast.error("إعدادات ImgBB غير مكتملة في ملف .env");
       return;
     }
@@ -569,7 +568,7 @@ export default function Admin() {
       const formData = new FormData();
       formData.append("image", compressedFile, "image.jpg");
       
-      const response = await fetch(`${apiUrl}?key=${apiKey}`, {
+      const response = await fetch(`${apiUrl}?key=${import.meta.env.VITE_IMGBB_API_KEY}`, {
         method: "POST",
         body: formData
       });
