@@ -10,9 +10,9 @@
     "preview": "vite preview"
   },
   "engines": {
-    "node": "20.x"
+    "node": ">=20"
   },
-  "packageManager": "pnpm@10.15.0",
+  "packageManager": "pnpm@8.15.0",
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",
