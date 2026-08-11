@@ -50,6 +50,7 @@ export type StoreSettings = {
   discountPercentage: number;
   lowStockThreshold?: number;
   depositAmount?: number;
+  bankAccountNumber?: string;
 };
 
 export type PromoCode = {

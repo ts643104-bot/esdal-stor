@@ -530,6 +530,7 @@ export default function Admin() {
         discountPercentage: Math.min(100, Math.max(0, Number(settings.discountPercentage) || 0)),
         lowStockThreshold: Math.max(1, Number(settings.lowStockThreshold) || 3),
         depositAmount: Math.max(0, Number(settings.depositAmount) || 0),
+        bankAccountNumber: sanitizeInput(settings.bankAccountNumber || ""),
       };
       await db.saveSettings(clean);
       setSettings(clean);
@@ -537,7 +538,7 @@ export default function Admin() {
     } finally {
       setSavingSettings(false);
     }
-  }, [settings.discountPercentage, settings.lowStockThreshold, settings.depositAmount]);
+  }, [settings.discountPercentage, settings.lowStockThreshold, settings.depositAmount, settings.bankAccountNumber]);
 
   const [uploadingImage, setUploadingImage] = useState(false);
 
@@ -1492,6 +1493,15 @@ export default function Admin() {
                   <div className="space-y-2 max-w-sm">
                     <Label htmlFor="deposit">قيمة العربون (ج.م)</Label>
                     <Input id="deposit" type="number" min="0" value={settings.depositAmount || 0} onChange={(e) => setSettings({ ...settings, depositAmount: Number(e.target.value) })} />
+                  </div>
+                </div>
+
+                <div className="space-y-4 bg-muted/50 p-4 rounded-xl border">
+                  <div className="flex items-center gap-2 mb-2"><DollarSign className="h-5 w-5 text-purple-600" /><h3 className="font-semibold text-lg">بيانات السحب والتحويل</h3></div>
+                  <p className="text-sm text-muted-foreground mb-4">أضف رقم الحساب البنكي أو محفظتك الرقمية للتحويلات والسحب.</p>
+                  <div className="space-y-2 max-w-sm">
+                    <Label htmlFor="bankAccount">رقم الحساب البنكي / المحفظة</Label>
+                    <Input id="bankAccount" type="text" placeholder="مثال: 1234567890" value={settings.bankAccountNumber || ""} onChange={(e) => setSettings({ ...settings, bankAccountNumber: e.target.value })} />
                   </div>
                 </div>
 
