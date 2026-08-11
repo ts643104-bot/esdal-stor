@@ -274,8 +274,8 @@ export default function CartSheet() {
     }
 
 
-    const apiUrl = import.meta.env.VITE_IMGBB_API_URL;
-    const apiKey = import.meta.env.VITE_IMGBB_API_KEY;
+    const apiUrl = "https://api.imgbb.com/1/upload" ;
+    const apiKey = "c517290f9573727f0188b26c07b3ecbf" ;
 
     if (!apiUrl || !apiKey) {
       toast.error("عذراً، خدمة رفع الصور غير متوفرة حالياً");
