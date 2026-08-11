@@ -51,6 +51,7 @@ export type StoreSettings = {
   lowStockThreshold?: number;
   depositAmount?: number;
   bankAccountNumber?: string;
+  whatsappNumbers?: string[]; // Multiple WhatsApp numbers for load balancing
 };
 
 export type PromoCode = {

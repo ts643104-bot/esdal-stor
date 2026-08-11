@@ -23,6 +23,7 @@ import {
   LayoutDashboard,
   Lock,
   LogOut,
+  MessageCircle,
   Package,
   Plus,
   Settings,
@@ -122,8 +123,9 @@ export default function Admin() {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [settings, setSettings] = useState<StoreSettings>({ discountPercentage: 0, lowStockThreshold: 3, depositAmount: 100 });
+  const [settings, setSettings] = useState<StoreSettings>({ discountPercentage: 0, lowStockThreshold: 3, depositAmount: 100, whatsappNumbers: [] });
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [whatsappInput, setWhatsappInput] = useState("");
 
   const [savingSettings, setSavingSettings] = useState(false);
   const [customerLoggedIn, setCustomerLoggedIn] = useState<string | null>(null);
@@ -523,6 +525,26 @@ export default function Admin() {
     [products]
   );
 
+  const handleAddWhatsapp = useCallback(() => {
+    const cleaned = normalizePhone(whatsappInput);
+    if (!cleaned || cleaned.length < 10) {
+      toast.error("رقم الوتساب يجب أن يكون 10 أرقام على الأقل");
+      return;
+    }
+    if ((settings.whatsappNumbers || []).includes(cleaned)) {
+      toast.error("هذا الرقم موجود بالفعل");
+      return;
+    }
+    setSettings({ ...settings, whatsappNumbers: [...(settings.whatsappNumbers || []), cleaned] });
+    setWhatsappInput("");
+    toast.success("تم إضافة رقم الوتساب");
+  }, [whatsappInput, settings]);
+
+  const handleRemoveWhatsapp = useCallback((phone: string) => {
+    setSettings({ ...settings, whatsappNumbers: (settings.whatsappNumbers || []).filter(p => p !== phone) });
+    toast.success("تم حذف رقم الوتساب");
+  }, [settings]);
+
   const handleSaveSettings = useCallback(async () => {
     setSavingSettings(true);
     try {
@@ -531,6 +553,7 @@ export default function Admin() {
         lowStockThreshold: Math.max(1, Number(settings.lowStockThreshold) || 3),
         depositAmount: Math.max(0, Number(settings.depositAmount) || 0),
         bankAccountNumber: sanitizeInput(settings.bankAccountNumber || ""),
+        whatsappNumbers: (settings.whatsappNumbers || []).filter(n => n.trim().length > 0),
       };
       await db.saveSettings(clean);
       setSettings(clean);
@@ -538,7 +561,7 @@ export default function Admin() {
     } finally {
       setSavingSettings(false);
     }
-  }, [settings.discountPercentage, settings.lowStockThreshold, settings.depositAmount, settings.bankAccountNumber]);
+  }, [settings.discountPercentage, settings.lowStockThreshold, settings.depositAmount, settings.bankAccountNumber, settings.whatsappNumbers]);
 
   const [uploadingImage, setUploadingImage] = useState(false);
 
@@ -1503,6 +1526,34 @@ export default function Admin() {
                     <Label htmlFor="bankAccount">رقم الحساب البنكي / المحفظة</Label>
                     <Input id="bankAccount" type="text" placeholder="مثال: 1234567890" value={settings.bankAccountNumber || ""} onChange={(e) => setSettings({ ...settings, bankAccountNumber: e.target.value })} />
                   </div>
+                </div>
+
+                <div className="space-y-4 bg-muted/50 p-4 rounded-xl border">
+                  <div className="flex items-center gap-2 mb-2"><MessageCircle className="h-5 w-5 text-green-600" /><h3 className="font-semibold text-lg">أرقام الوتساب للتواصل</h3></div>
+                  <p className="text-sm text-muted-foreground mb-4">أضف 2 أو أكثر من أرقام الوتساب. سيتم التبديل التلقائي بينهم عند كل رسالة.</p>
+                  <div className="space-y-2 max-w-sm">
+                    <Label htmlFor="whatsapp">رقم الوتساب</Label>
+                    <div className="flex gap-2">
+                      <Input id="whatsapp" type="tel" placeholder="مثال: 201234567890" value={whatsappInput} onChange={(e) => setWhatsappInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleAddWhatsapp()} />
+                      <Button onClick={handleAddWhatsapp} size="sm" className="bg-green-600 hover:bg-green-700"><Plus className="h-4 w-4" /></Button>
+                    </div>
+                  </div>
+                  {(settings.whatsappNumbers || []).length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-sm font-medium">الأرقام المضافة ({settings.whatsappNumbers?.length}):</p>
+                      <div className="grid grid-cols-1 gap-2">
+                        {settings.whatsappNumbers?.map((phone, idx) => (
+                          <div key={idx} className="flex items-center justify-between bg-white p-2 rounded border">
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="bg-green-50">WhatsApp</Badge>
+                              <code className="text-sm font-mono">{phone}</code>
+                            </div>
+                            <Button onClick={() => handleRemoveWhatsapp(phone)} size="sm" variant="ghost" className="text-red-600 hover:text-red-700 hover:bg-red-50"><Trash2 className="h-4 w-4" /></Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <Button onClick={handleSaveSettings} disabled={savingSettings} className="w-full sm:w-auto">{savingSettings ? "جاري الحفظ..." : "حفظ الإعدادات"}</Button>

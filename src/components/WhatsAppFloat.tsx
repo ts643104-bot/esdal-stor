@@ -1,9 +1,26 @@
 import { MessageCircle } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useEffect, useState } from "react";
+import { db } from "@/lib/db";
+import { getActiveWhatsappNumber } from "@/lib/utils";
 
 export default function WhatsAppFloat() {
   const { lang } = useLanguage();
-  const phone = "201122310891";
+  const [phone, setPhone] = useState("201122310891");
+
+  useEffect(() => {
+    const loadPhone = async () => {
+      try {
+        const settings = await db.getSettings();
+        const activePhone = getActiveWhatsappNumber(settings.whatsappNumbers);
+        setPhone(activePhone);
+      } catch (err) {
+        console.error("Failed to load WhatsApp numbers", err);
+      }
+    };
+    loadPhone();
+  }, []);
+
   const message = lang === "ar" ? "مرحباً، لدي استفسار..." : "Hello, I have a question...";
 
   return (

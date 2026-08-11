@@ -19,8 +19,8 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { toast } from "sonner";
 import { EGYPT_GOVERNORATES } from "@/lib/constants";
 import { hasFirebase, storage } from "@/lib/firebase";
+import { getActiveWhatsappNumber } from "@/lib/utils";
 
-const WHATSAPP_PHONE_E164 = "201122310891";
 const VODAFONE_CASH_NUMBER = "01140971703";
 
 function buildWhatsappMessage(
@@ -116,6 +116,7 @@ export default function CartSheet() {
   } | null>(null);
   const [discountPct, setDiscountPct] = useState(0);
   const [depositAmount, setDepositAmount] = useState(100);
+  const [whatsappNumbers, setWhatsappNumbers] = useState<string[]>([]);
   const [useLoyaltyPoints, setUseLoyaltyPoints] = useState(false);
   const [orderNote, setOrderNote] = useState("");
   const [promoCode, setPromoCode] = useState("");
@@ -139,6 +140,7 @@ export default function CartSheet() {
       db.getSettings().then(s => {
         setDiscountPct(s.discountPercentage || 0);
         if (s.depositAmount) setDepositAmount(s.depositAmount);
+        if (s.whatsappNumbers) setWhatsappNumbers(s.whatsappNumbers);
       });
     });
   }, []);
@@ -244,7 +246,8 @@ export default function CartSheet() {
       }).catch(err => console.error("Failed to send email notification", err));
       
       const waMsg = buildWhatsappMessage(cart.items, cart.totalPrice, shippingCost, totalDiscount, finalTotal, paymentMethod, senderPhone, customerName, customerAddress, customerPhone, governorate, `${shippingType === "express" ? "[Express] " : ""}${preferredTime}`, dateStr, orderId, orderNote, receiptUrl, transferredAmount, onlinePaymentMode, depositAmount);
-      const waUrl = `https://wa.me/${WHATSAPP_PHONE_E164}?text=${encodeURIComponent(waMsg)}`;
+      const activePhone = getActiveWhatsappNumber(whatsappNumbers);
+      const waUrl = `https://wa.me/${activePhone}?text=${encodeURIComponent(waMsg)}`;
       
       setSuccessData({ 
         orderId, waUrl,
