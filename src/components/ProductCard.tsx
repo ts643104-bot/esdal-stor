@@ -29,7 +29,7 @@ const ProductCard = memo(function ProductCard({ product }: { product: Product })
       viewport={{ once: true, margin: "-50px" }}
       transition={{ duration: 0.4 }}
     >
-      <Card className="group h-full overflow-hidden rounded-[22px] border border-border/70 bg-card/95 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:border-primary/30">
+      <Card className="group h-full overflow-hidden rounded-2xl border border-border/70 bg-card/95 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:border-primary/30 sm:rounded-[22px]">
         <div className="relative">
           <Dialog open={isDetailsOpen} onOpenChange={setIsDetailsOpen}>
             <div className="relative">
@@ -39,7 +39,7 @@ const ProductCard = memo(function ProductCard({ product }: { product: Product })
                 onClick={() => setIsDetailsOpen(true)}
                 aria-label={`عرض تفاصيل ${product.name}`}
               >
-                <div className="relative aspect-[4/5] overflow-hidden bg-muted/30">
+                <div className="relative aspect-[4/3] overflow-hidden bg-muted/30 sm:aspect-[4/5]">
                   {product.image_url ? (
                     <img
                       src={product.image_url}
@@ -165,20 +165,20 @@ const ProductCard = memo(function ProductCard({ product }: { product: Product })
           </Dialog>
         </div>
 
-        <CardContent className="flex flex-1 flex-col gap-3 p-4">
+        <CardContent className="flex flex-1 flex-col gap-2 p-3 sm:gap-3 sm:p-4">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-muted-foreground">
+              <p className="text-[9px] font-semibold uppercase tracking-[0.15em] text-muted-foreground sm:text-[11px] sm:tracking-[0.25em]">
                 {product.category}
               </p>
-              <h3 className="line-clamp-2 text-sm font-semibold leading-6 text-foreground">{product.name}</h3>
+              <h3 className="line-clamp-2 text-xs font-semibold leading-5 text-foreground sm:text-sm sm:leading-6">{product.name}</h3>
             </div>
-            <div className="whitespace-nowrap rounded-full border border-primary/15 bg-primary/5 px-2.5 py-1 text-[11px] font-semibold text-primary">
+            <div className="whitespace-nowrap rounded-full border border-primary/15 bg-primary/5 px-1.5 py-0.5 text-[9px] font-semibold text-primary sm:px-2.5 sm:py-1 sm:text-[11px]">
               {product.in_stock ? (lang === "ar" ? "متوفر" : "In stock") : (lang === "ar" ? "غير متوفر" : "Out of stock")}
             </div>
           </div>
 
-          <p className="line-clamp-2 text-sm leading-5 text-muted-foreground">
+          <p className="line-clamp-2 text-[11px] leading-4 text-muted-foreground sm:text-sm sm:leading-5">
             {product.description || (lang === "ar" ? "لا يوجد وصف إضافي متاح حالياً." : "No additional description is available yet.")}
           </p>
 
@@ -192,9 +192,9 @@ const ProductCard = memo(function ProductCard({ product }: { product: Product })
                 <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
                   {lang === "ar" ? "السعر" : "Price"}
                 </p>
-                <p className="text-xl font-black text-primary">
+                <p className="text-lg font-black text-primary sm:text-xl">
                   {product.price_egp.toLocaleString("ar-EG")}
-                  <span className="ml-1 text-sm font-semibold text-muted-foreground">{lang === "ar" ? "ج.م" : "EGP"}</span>
+                  <span className="ml-1 text-[10px] font-semibold text-muted-foreground sm:text-sm">{lang === "ar" ? "ج.م" : "EGP"}</span>
                 </p>
               </div>
               {showRating && (
@@ -219,11 +219,11 @@ const ProductCard = memo(function ProductCard({ product }: { product: Product })
               </div>
             ) : (
               <Button
-                className="h-11 w-full rounded-2xl font-bold shadow-sm transition-all active:scale-[0.98]"
+                className="h-10 w-full rounded-xl px-2 text-xs font-bold shadow-sm transition-all active:scale-[0.98] sm:h-11 sm:rounded-2xl sm:text-sm"
                 disabled={!product.in_stock}
                 onClick={() => availableSizes.length > 0 ? setIsDetailsOpen(true) : cart.add(product)}
               >
-                <ShoppingBag className="ml-2 h-5 w-5" />
+                <ShoppingBag className="ml-1 h-4 w-4 sm:ml-2 sm:h-5 sm:w-5" />
                 {t("product.addToCart")}
               </Button>
             )}
