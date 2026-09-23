@@ -926,19 +926,19 @@ export default function Admin() {
                     <Button className="gap-2"><Plus className="h-4 w-4" /> إضافة منتج</Button>
                   </DialogTrigger>
 
-                  <DialogContent className="sm:max-w-[500px]" dir="rtl">
+                  <DialogContent className="w-[calc(100%-1rem)] max-h-[calc(100dvh-1rem)] overflow-y-auto rounded-2xl p-4 sm:max-w-[500px] sm:rounded-lg sm:p-6" dir="rtl">
                     <DialogHeader>
                       <DialogTitle>{newProduct.id ? "تعديل المنتج" : "إضافة منتج جديد"}</DialogTitle>
                     </DialogHeader>
 
-                    <div className="grid gap-4 py-4">
-                      <div className="grid gap-2">
+                    <div className="grid gap-3 py-2 sm:gap-4 sm:py-4">
+                      <div className="grid gap-1.5">
                         <Label>الصورة الرئيسية</Label>
-                        <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2 sm:gap-4">
                           {newProduct.image_url && (
                             <img
                               src={newProduct.image_url}
-                              className="h-16 w-16 object-cover rounded-md border shrink-0"
+                              className="h-12 w-12 object-cover rounded-md border shrink-0 sm:h-16 sm:w-16"
                               alt="Preview"
                               loading="lazy"
                               referrerPolicy="no-referrer"
@@ -948,7 +948,7 @@ export default function Admin() {
                         </div>
                       </div>
 
-                      <div className="grid gap-2">
+                      <div className="grid gap-1.5">
                         <Label>معرض الصور الإضافية (اختياري)</Label>
                         <div className="flex flex-col gap-2">
                           <Input type="file" accept="image/*" multiple onChange={handleGalleryUpload} disabled={uploadingImage} />
@@ -975,12 +975,12 @@ export default function Admin() {
                         </div>
                       </div>
 
-                      <div className="grid gap-2">
+                      <div className="grid gap-1.5">
                         <Label>اسم المنتج</Label>
                         <Input value={newProduct.name} onChange={(e) => setNewProduct((prev) => ({ ...prev, name: e.target.value }))} />
                       </div>
 
-                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
                         <div className="grid gap-2">
                           <Label>التكلفة الأصلية</Label>
                           <Input type="number" value={newProduct.cost_price_egp || ""} onChange={(e) => {
@@ -1001,7 +1001,7 @@ export default function Admin() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
                         <div className="grid gap-2">
                           <Label>التصنيف</Label>
                           <Select
@@ -1021,7 +1021,7 @@ export default function Admin() {
                         </div>
                       </div>
 
-                      <div className="grid gap-2">
+                      <div className="grid gap-1.5">
                         <Label>مقاس الملابس (اختياري)</Label>
                         <Select value={newProduct.size || "none"} onValueChange={(value) => setNewProduct((prev) => ({ ...prev, size: value === "none" ? undefined : value as Product["size"] }))}>
                           <SelectTrigger className="bg-background"><SelectValue placeholder="اختر المقاس" /></SelectTrigger>
@@ -1034,9 +1034,9 @@ export default function Admin() {
 
                       <div className="grid gap-2">
                         <Label>المقاسات المتاحة للعميل</Label>
-                        <div className="grid grid-cols-2 gap-2 rounded-xl border bg-muted/20 p-3 sm:grid-cols-5">
+                        <div className="grid grid-cols-2 gap-1.5 rounded-xl border bg-muted/20 p-2 sm:grid-cols-5 sm:gap-2 sm:p-3">
                           {(["M", "L", "XL", "XXL", "XXXL"] as const).map((size: ProductSize) => (
-                            <label key={size} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border bg-background px-3 text-sm font-bold">
+                            <label key={size} className="flex min-h-10 cursor-pointer items-center gap-1.5 rounded-lg border bg-background px-2 text-xs font-bold sm:min-h-11 sm:gap-2 sm:px-3 sm:text-sm">
                               <input
                                 type="checkbox"
                                 checked={(newProduct.sizes || []).includes(size)}
@@ -1054,14 +1054,14 @@ export default function Admin() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
                         <div className="grid gap-2">
                           <Label>كمية المخزون</Label>
                           <Input type="number" value={newProduct.stock_quantity ?? 10} onChange={(e) => setNewProduct((prev) => ({ ...prev, stock_quantity: Number(e.target.value) }))} />
                         </div>
                       </div>
 
-                      <div className="grid gap-2">
+                      <div className="grid gap-1.5">
                         <Label>الوصف</Label>
                         <Textarea value={newProduct.description} onChange={(e) => setNewProduct((prev) => ({ ...prev, description: e.target.value }))} />
                       </div>
