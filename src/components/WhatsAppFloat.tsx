@@ -6,7 +6,7 @@ import { getActiveWhatsappNumber } from "@/lib/utils";
 
 export default function WhatsAppFloat() {
   const { lang } = useLanguage();
-  const [phone, setPhone] = useState("201122310891");
+  const [phone, setPhone] = useState("201140971703");
 
   useEffect(() => {
     const loadPhone = async () => {

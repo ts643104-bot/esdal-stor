@@ -11,7 +11,7 @@ export function cn(...inputs: ClassValue[]) {
  */
 export function getActiveWhatsappNumber(numbers?: string[]): string {
   // Default fallback number
-  const defaultNumber = "201122310891";
+  const defaultNumber = "201140971703";
   
   if (!numbers || numbers.length === 0) {
     return defaultNumber;

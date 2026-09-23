@@ -437,7 +437,7 @@ export default function Home({ targetSection }: HomeProps) {
             <div className="group relative">
                <div className="absolute -inset-1 bg-gradient-to-r from-primary/50 to-primary opacity-20 blur group-hover:opacity-40 transition duration-500"></div>
                <div className="relative text-[10px] font-black uppercase tracking-widest bg-background/80 border border-primary/20 px-3 py-1.5 rounded-lg shadow-sm">
-                 {lang === "ar" ? "برمجة وتطوير طه سلطان" : "Developed by Taha Sultan"}
+                 {lang === "ar" ? "من تصميم المهندس طه سلطان" : "Designed by Engineer Taha Sultan"}
                </div>
             </div>
           </div>
