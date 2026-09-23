@@ -2,7 +2,7 @@ import { ShoppingBag, Plus, Minus, Image as ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import type { Product } from "@/lib/types";
+import type { Product, ProductSize } from "@/lib/types";
 import { useCart } from "@/contexts/CartContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -13,7 +13,9 @@ const ProductCard = memo(function ProductCard({ product }: { product: Product })
   const cart = useCart();
   const { t, lang } = useLanguage();
 
-  const inCart = cart.items.find((x) => x.product.id === product.id);
+  const availableSizes = product.sizes?.length ? product.sizes : product.size ? [product.size] : [];
+  const [selectedSize, setSelectedSize] = useState<ProductSize | undefined>(availableSizes[0]);
+  const inCart = cart.items.find((x) => x.product.id === product.id && x.product.size === selectedSize);
   const [activeImage, setActiveImage] = useState(product.image_url);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
@@ -85,8 +87,8 @@ const ProductCard = memo(function ProductCard({ product }: { product: Product })
             </div>
 
             <DialogContent className="overflow-hidden bg-background p-0 sm:max-w-2xl">
-              <div className="flex h-[60vh] flex-col sm:flex-row">
-                <div className="flex flex-1 flex-col items-center justify-center bg-muted p-4">
+              <div className="flex h-[88vh] max-h-[760px] flex-col sm:h-[70vh] sm:flex-row">
+                <div className="flex min-h-[42vh] flex-1 flex-col items-center justify-center bg-muted p-3 sm:min-h-0 sm:p-4">
                   <div className="mb-3 flex items-center gap-2 self-end">
                     <Button type="button" variant="outline" size="icon" className="h-8 w-8" onClick={() => setZoomLevel((value) => Math.max(1, Number((value - 0.25).toFixed(2))))}>
                       <span className="text-lg leading-none">−</span>
@@ -108,7 +110,7 @@ const ProductCard = memo(function ProductCard({ product }: { product: Product })
                     )}
                   </div>
                 </div>
-                <div className="flex w-full flex-col border-t p-4 sm:w-1/3 sm:border-l sm:border-t-0">
+                <div className="flex min-h-0 w-full flex-col border-t p-4 sm:w-1/3 sm:border-l sm:border-t-0">
                   <DialogHeader className="mb-4">
                     <DialogTitle>{product.name}</DialogTitle>
                   </DialogHeader>
@@ -119,9 +121,9 @@ const ProductCard = memo(function ProductCard({ product }: { product: Product })
                     {(product.images && product.images.length > 0) && (
                       <div>
                         <h4 className="mb-2 text-sm font-semibold">معرض الصور</h4>
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                           <div
-                            className={`aspect-square cursor-pointer overflow-hidden rounded-md border-2 ${activeImage === product.image_url ? "border-primary" : "border-transparent"}`}
+                            className={`aspect-square min-h-28 cursor-pointer overflow-hidden rounded-lg border-2 ${activeImage === product.image_url ? "border-primary" : "border-border/60"}`}
                             onClick={() => setActiveImage(product.image_url)}
                           >
                             <img src={product.image_url} className="h-full w-full object-cover" alt="Main" />
@@ -129,7 +131,7 @@ const ProductCard = memo(function ProductCard({ product }: { product: Product })
                           {product.images.map((img, idx) => (
                             <div
                               key={idx}
-                              className={`aspect-square cursor-pointer overflow-hidden rounded-md border-2 ${activeImage === img ? "border-primary" : "border-transparent"}`}
+                              className={`aspect-square min-h-28 cursor-pointer overflow-hidden rounded-lg border-2 ${activeImage === img ? "border-primary" : "border-border/60"}`}
                               onClick={() => setActiveImage(img)}
                             >
                               <img src={img} className="h-full w-full object-cover" alt={`Gallery ${idx}`} />
@@ -139,8 +141,20 @@ const ProductCard = memo(function ProductCard({ product }: { product: Product })
                       </div>
                     )}
                   </div>
-                  <div className="mt-4 border-t pt-4">
-                    <Button className="w-full" disabled={!product.in_stock} onClick={() => cart.add(product)}>
+                  <div className="mt-4 space-y-3 border-t pt-4">
+                    {availableSizes.length > 0 && (
+                      <label className="block space-y-1.5 text-sm font-bold">
+                        <span>اختار المقاس</span>
+                        <select
+                          value={selectedSize}
+                          onChange={(event) => setSelectedSize(event.target.value as ProductSize)}
+                          className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                        >
+                          {availableSizes.map((size) => <option key={size} value={size}>{size}</option>)}
+                        </select>
+                      </label>
+                    )}
+                    <Button className="w-full" disabled={!product.in_stock} onClick={() => cart.add(product, selectedSize)}>
                       <ShoppingBag className="mr-2 h-4 w-4" />
                       {product.in_stock ? t("product.addToCart") : (lang === "ar" ? "نفد من المخزون" : "Out of stock")}
                     </Button>
@@ -168,6 +182,10 @@ const ProductCard = memo(function ProductCard({ product }: { product: Product })
             {product.description || (lang === "ar" ? "لا يوجد وصف إضافي متاح حالياً." : "No additional description is available yet.")}
           </p>
 
+          {product.size && (
+            <div className="text-xs font-bold text-muted-foreground">{lang === "ar" ? "المقاس" : "Size"}: <span className="text-primary">{product.size}</span></div>
+          )}
+
           <div className="mt-auto space-y-3">
             <div className="flex items-end justify-between gap-2">
               <div>
@@ -188,14 +206,14 @@ const ProductCard = memo(function ProductCard({ product }: { product: Product })
 
             {inCart ? (
               <div className="flex items-center justify-between rounded-2xl border border-border/60 bg-secondary/35 p-1">
-                <Button size="icon" variant="ghost" className="h-10 w-10 rounded-xl text-destructive" onClick={() => cart.dec(product.id)}>
+                <Button size="icon" variant="ghost" className="h-10 w-10 rounded-xl text-destructive" onClick={() => cart.dec(product.id, selectedSize)}>
                   <Minus className="h-5 w-5" />
                 </Button>
                 <div className="flex flex-col items-center">
                   <span className="mb-0.5 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">{lang === "ar" ? "الكمية" : "Qty"}</span>
                   <span className="text-sm font-bold leading-none">{inCart.qty}</span>
                 </div>
-                <Button size="icon" variant="ghost" className="h-10 w-10 rounded-xl text-primary" onClick={() => cart.add(product)}>
+                <Button size="icon" variant="ghost" className="h-10 w-10 rounded-xl text-primary" onClick={() => cart.add(product, selectedSize)}>
                   <Plus className="h-5 w-5" />
                 </Button>
               </div>
@@ -203,7 +221,7 @@ const ProductCard = memo(function ProductCard({ product }: { product: Product })
               <Button
                 className="h-11 w-full rounded-2xl font-bold shadow-sm transition-all active:scale-[0.98]"
                 disabled={!product.in_stock}
-                onClick={() => cart.add(product)}
+                onClick={() => availableSizes.length > 0 ? setIsDetailsOpen(true) : cart.add(product)}
               >
                 <ShoppingBag className="ml-2 h-5 w-5" />
                 {t("product.addToCart")}

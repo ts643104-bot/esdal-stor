@@ -1,12 +1,13 @@
 import type { Product, CartItem, Order, Expense, StoreSettings, UserProfile, PromoCode, Category } from "./types";
 import { nanoid } from "nanoid";
+import { isValidOrderQuantity, cleanUserText } from "./validation";
 import { dbFirestore, hasFirebase } from "./firebase";
 import { collection, doc, getDocs, getDoc, setDoc, deleteDoc, updateDoc, query, orderBy, where, runTransaction } from "firebase/firestore";
 
 const getLocalProducts = (): Product[] => {
   const stored = localStorage.getItem("esdal_products_v2");
   if (stored) return JSON.parse(stored);
-  
+
   const fb: Product[] = []; // الموقع فارغ تماماً وجاهز لرفع المنتجات
   localStorage.setItem("esdal_products_v2", JSON.stringify(fb));
   return fb;
@@ -71,12 +72,26 @@ export const db = {
     return orders.find((o) => o.id === id) || null;
   },
   addOrder: async (
-    items: CartItem[], total: number, paymentMethod: "cod" | "online" = "cod", 
-    senderPhone?: string, customerName?: string, customerAddress?: string, 
-    customerPhone?: string, governorate?: string, shippingCost?: number, 
+    items: CartItem[], total: number, paymentMethod: "cod" | "online" = "cod",
+    senderPhone?: string, customerName?: string, customerAddress?: string,
+    customerPhone?: string, governorate?: string, shippingCost?: number,
     preferredTime?: string, discountApplied?: number, preferredDate?: string,
-    userId?: string, loyaltyPointsEarned?: number, loyaltyPointsRedeemed?: number, paymentReceiptUrl?: string, note?: string, transferredAmount?: number, onlinePaymentMode?: "full" | "partial"
+    userId?: string, loyaltyPointsEarned?: number, loyaltyPointsRedeemed?: number, paymentReceiptUrl?: string, note?: string, transferredAmount?: number, termsAccepted = false, termsAcceptedAt?: string
   ): Promise<string> => {
+    if (!userId) throw new Error("يجب تسجيل الدخول لإتمام الطلب");
+    if (!items.length || items.some((item) => !item.product.id || !isValidOrderQuantity(item.qty))) {
+      throw new Error("بيانات المنتجات غير صالحة");
+    }
+    const safeName = cleanUserText(customerName || "", 120);
+    const safeAddress = cleanUserText(customerAddress || "", 500);
+    const safeGovernorate = cleanUserText(governorate || "", 80);
+    const safeNote = cleanUserText(note || "", 500);
+    if (safeName.length < 2 || safeAddress.length < 6 || !safeGovernorate) {
+      throw new Error("بيانات التوصيل غير مكتملة");
+    }
+    if (!Number.isFinite(total) || total < 0 || !Number.isFinite(shippingCost ?? 0)) {
+      throw new Error("قيمة الطلب غير صالحة");
+    }
     const newOrder: Order = {
       id: nanoid(8).toUpperCase(),
       date: new Date().toISOString(),
@@ -84,12 +99,11 @@ export const db = {
       total,
       status: "pending",
       paymentMethod,
-      onlinePaymentMode,
       senderPhone,
-      customerName,
-      customerAddress,
+      customerName: safeName,
+      customerAddress: safeAddress,
       customerPhone,
-      governorate,
+      governorate: safeGovernorate,
       shippingCost,
       preferredTime,
       preferredDate,
@@ -99,8 +113,10 @@ export const db = {
       loyaltyPointsRedeemed,
       paymentReceiptUrl,
       transferredAmount,
-      note
-    };
+        note: safeNote,
+        termsAccepted,
+        termsAcceptedAt: termsAcceptedAt || (termsAccepted ? new Date().toISOString() : undefined)
+      };;
     if (hasFirebase && dbFirestore) {
       // High security: orders must be tied to an authenticated user (anonymous auth is OK)
       if (!userId) {
@@ -119,7 +135,7 @@ export const db = {
       orders.unshift(newOrder);
       localStorage.setItem("esdal_orders_v2", JSON.stringify(orders));
     }
-    
+
     // Update loyalty points if userId is provided
     if (userId) {
       const profile = await db.getUserProfile(userId);
@@ -127,10 +143,12 @@ export const db = {
         const currentPoints = profile.loyaltyPoints || 0;
         const totalEarned = profile.totalEarnedPoints || 0;
         const newPoints = currentPoints - (loyaltyPointsRedeemed || 0) + (loyaltyPointsEarned || 0);
-        await db.saveUserProfile({ 
-          ...profile, 
+        await db.saveUserProfile({
+          ...profile,
           loyaltyPoints: newPoints,
-          totalEarnedPoints: totalEarned + (loyaltyPointsEarned || 0)
+          totalEarnedPoints: totalEarned + (loyaltyPointsEarned || 0),
+          termsAccepted: termsAccepted ? true : profile.termsAccepted,
+          termsAcceptedAt: termsAcceptedAt || profile.termsAcceptedAt
         });
       }
     }
@@ -165,10 +183,10 @@ export const db = {
             const currentStock = pData.stock_quantity ?? 10;
             const newStock = Math.max(0, currentStock - item.qty);
             const currentSales = pData.sales_count ?? 0;
-            transaction.update(pSnap.ref, { 
-              stock_quantity: newStock, 
+            transaction.update(pSnap.ref, {
+              stock_quantity: newStock,
               in_stock: newStock > 0,
-              sales_count: currentSales + item.qty 
+              sales_count: currentSales + item.qty
             });
           }
         });
@@ -252,7 +270,9 @@ export const db = {
         const snap = await getDoc(doc(dbFirestore, "settings", "store"));
         if (snap.exists()) return snap.data() as StoreSettings;
       }
-    } catch(e) {}
+    } catch (e) {
+      console.warn("Failed to load store settings from Firebase", e);
+    }
     const stored = localStorage.getItem("esdal_settings_v2");
     return stored ? JSON.parse(stored) : { discountPercentage: 0 };
   },
@@ -261,7 +281,9 @@ export const db = {
       if (hasFirebase && dbFirestore) {
         await setDoc(doc(dbFirestore, "settings", "store"), settings);
       }
-    } catch(e) {}
+    } catch (e) {
+      console.warn("Failed to save store settings to Firebase", e);
+    }
     localStorage.setItem("esdal_settings_v2", JSON.stringify(settings));
   },
   getUserProfile: async (id: string): Promise<UserProfile | null> => {
@@ -342,7 +364,7 @@ export const db = {
     }
     const stored = localStorage.getItem("esdal_categories_v2");
     if (stored) return JSON.parse(stored);
-    
+
     // Default categories if none exist
     const defaults: Category[] = [
       { id: "cat-1", name: "عام" }

@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { db } from "@/lib/db";
-import type { Category, Expense, Order, Product, PromoCode, StoreSettings, UserProfile } from "@/lib/types";
+import type { Category, Expense, Order, Product, ProductSize, PromoCode, StoreSettings, UserProfile } from "@/lib/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -36,8 +36,7 @@ import {
   WalletCards,
   Image as ImageIcon,
 } from "lucide-react";
-import { hasFirebase, auth, storage } from "@/lib/firebase";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { hasFirebase, auth } from "@/lib/firebase";
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
 import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
 import { dbFirestore } from "@/lib/firebase";
@@ -45,6 +44,7 @@ import { nanoid } from "nanoid";
 import { toast } from "sonner";
 import { Link } from "wouter";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { cleanUserText, isValidEgyptianPhone, normalizeEgyptianPhone } from "@/lib/validation";
 
 // Lazy-load Recharts to keep initial bundle light
 const SalesOverviewChart = lazy(() => import("@/components/admin/SalesOverviewChart"));
@@ -77,24 +77,12 @@ const compressImage = async (file: File): Promise<Blob> => {
   });
 };
 
-function sanitizeFileName(name: string) {
-  return name.replace(/[\\/]/g, "_").replace(/[\u0000-\u001F\u007F]/g, "").slice(0, 120);
-}
-
 function sanitizeInput(str: string) {
-  if (!str) return "";
-  return str.replace(/[<>&"']/g, (m) => ({
-    '<': '&lt;',
-    '>': '&gt;',
-    '&': '&amp;',
-    '"': '&quot;',
-    "'": '&#39;'
-  }[m] || m)).trim();
+  return cleanUserText(str, 500);
 }
 
 function normalizePhone(raw: string) {
-  const digits = (raw || "").replace(/\D/g, "");
-  return digits;
+  return normalizeEgyptianPhone(raw);
 }
 
 function safeExternalUrl(url?: string) {
@@ -115,7 +103,7 @@ export default function Admin() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
-  const [authErrors, setAuthErrors] = useState<{email?: string; password?: string; general?: string}>({});
+  const [authErrors, setAuthErrors] = useState<{ email?: string; password?: string; general?: string }>({});
 
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -123,7 +111,7 @@ export default function Admin() {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [settings, setSettings] = useState<StoreSettings>({ discountPercentage: 0, lowStockThreshold: 3, depositAmount: 100, whatsappNumbers: [] });
+  const [settings, setSettings] = useState<StoreSettings>({ discountPercentage: 0, lowStockThreshold: 3, whatsappNumbers: [] });
   const [newCategoryName, setNewCategoryName] = useState("");
   const [whatsappInput, setWhatsappInput] = useState("");
 
@@ -148,6 +136,8 @@ export default function Admin() {
     price_egp: 0,
     category: "",
     description: "",
+    size: undefined,
+    sizes: ["M", "L", "XL", "XXL", "XXXL"],
     in_stock: true,
     image_url: "",
     stock_quantity: 10,
@@ -221,13 +211,13 @@ export default function Admin() {
       snapshot.docChanges().forEach((change) => {
         if (change.type === "added" && !initialLoad) {
           const newOrder = change.doc.data() as Order;
-          
+
           // Strict validation: Only play sound if order is fully valid to avoid spam
           let isValid = true;
           if (newOrder.paymentMethod === "online") {
-             if (!newOrder.senderPhone || !newOrder.paymentReceiptUrl || !newOrder.transferredAmount) {
-                isValid = false;
-             }
+            if (!newOrder.senderPhone || !newOrder.paymentReceiptUrl || !newOrder.transferredAmount) {
+              isValid = false;
+            }
           }
 
           if (isValid) {
@@ -242,7 +232,7 @@ export default function Admin() {
           }
         }
       });
-      
+
       initialLoad = false;
     });
 
@@ -263,16 +253,16 @@ export default function Admin() {
   const handleLogin = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
-      
+
       setAuthErrors({});
       let hasErr = false;
-      const newErrors: any = {};
-      
+      const newErrors: { email?: string; password?: string; general?: string } = {};
+
       if (!email || !email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
         newErrors.email = "صيغة البريد الإلكتروني غير صحيحة";
         hasErr = true;
       }
-      
+
       if (!password || password.length < 6) {
         newErrors.password = "كلمة المرور يجب أن تكون 6 أحرف على الأقل";
         hasErr = true;
@@ -426,16 +416,16 @@ export default function Admin() {
 
   const saveCustomer = useCallback(async () => {
     const { name, phone, address, governorate } = newCustomer;
-    if (!name.trim() || !phone.trim() || !address.trim() || !governorate.trim()) {
-      toast.error("يرجى ملء كافة بيانات العميل");
+    if (!name || !isValidEgyptianPhone(phone) || address.trim().length < 6 || !governorate.trim()) {
+      toast.error("يرجى إدخال اسم وعنوان ورقم هاتف مصري صحيح");
       return;
     }
     const customer: UserProfile = {
       id: "cust_" + nanoid(8),
-      name: name.trim(),
-      phone: phone.trim(),
-      address: address.trim(),
-      governorate: governorate.trim(),
+      name: cleanUserText(name, 120),
+      phone: normalizePhone(phone),
+      address: cleanUserText(address, 500),
+      governorate: cleanUserText(governorate, 80),
       joinedAt: new Date().toISOString(),
       loyaltyPoints: 0,
       totalEarnedPoints: 0,
@@ -456,17 +446,18 @@ export default function Admin() {
   }, []);
 
   const resetFinance = useCallback(async (type: "orders" | "expenses" | "all") => {
-    const msg = type === "all" ? "تصفية كافة الحسابات (الطلبات والمصروفات)" : 
-                type === "orders" ? "مسح كافة سجلات الطلبات" : "مسح كافة سجلات المصروفات";
-                
+    const msg = type === "all" ? "تصفية كافة الحسابات (الطلبات والمصروفات)" :
+      type === "orders" ? "مسح كافة سجلات الطلبات" : "مسح كافة سجلات المصروفات";
+
     if (confirm(`تحذير: هل أنت متأكد من ${msg}؟ لا يمكن التراجع عن هذه الخطوة.`)) {
       try {
         if (type === "orders" || type === "all") await db.clearOrders();
         if (type === "expenses" || type === "all") await db.clearExpenses();
-        
+
         await refreshAll();
         toast.success("تمت التصفية بنجاح");
       } catch (err) {
+        console.error("Failed to reset finance data", err);
         toast.error("حدث خطأ أثناء التصفية");
       }
     }
@@ -484,7 +475,7 @@ export default function Admin() {
         o.governorate || "-",
         itemsStr,
         o.total.toString(),
-        o.paymentMethod === "online" ? `أونلاين (${o.onlinePaymentMode === "partial" ? "عربون" : "كامل"})` : "عند الاستلام",
+        o.paymentMethod === "online" ? "أونلاين - المبلغ بالكامل" : "عند الاستلام",
         o.status === "completed" ? "مكتمل" : "قيد المراجعة",
       ]
         .map((field) => `"${String(field).replace(/"/g, '""')}"`)
@@ -527,8 +518,8 @@ export default function Admin() {
 
   const handleAddWhatsapp = useCallback(() => {
     const cleaned = normalizePhone(whatsappInput);
-    if (!cleaned || cleaned.length < 10) {
-      toast.error("رقم الوتساب يجب أن يكون 10 أرقام على الأقل");
+    if (!cleaned || !isValidEgyptianPhone(cleaned)) {
+      toast.error("يرجى إدخال رقم واتساب مصري صحيح");
       return;
     }
     if ((settings.whatsappNumbers || []).includes(cleaned)) {
@@ -551,7 +542,6 @@ export default function Admin() {
       const clean: StoreSettings = {
         discountPercentage: Math.min(100, Math.max(0, Number(settings.discountPercentage) || 0)),
         lowStockThreshold: Math.max(1, Number(settings.lowStockThreshold) || 3),
-        depositAmount: Math.max(0, Number(settings.depositAmount) || 0),
         bankAccountNumber: sanitizeInput(settings.bankAccountNumber || ""),
         whatsappNumbers: (settings.whatsappNumbers || []).filter(n => n.trim().length > 0),
       };
@@ -561,7 +551,7 @@ export default function Admin() {
     } finally {
       setSavingSettings(false);
     }
-  }, [settings.discountPercentage, settings.lowStockThreshold, settings.depositAmount, settings.bankAccountNumber, settings.whatsappNumbers]);
+  }, [settings.discountPercentage, settings.lowStockThreshold, settings.bankAccountNumber, settings.whatsappNumbers]);
 
   const [uploadingImage, setUploadingImage] = useState(false);
 
@@ -591,19 +581,19 @@ export default function Admin() {
       const compressedFile = await compressImage(file);
       const formData = new FormData();
       formData.append("image", compressedFile, "image.jpg");
-      
+
       const response = await fetch(`${apiUrl}?key=${import.meta.env.VITE_IMGBB_API_KEY}`, {
         method: "POST",
         body: formData
       });
-      
+
       const data = await response.json();
-      if (data.success) {
-        setNewProduct((prev) => ({ ...prev, image_url: data.data.url }));
-        toast.success("تم رفع الصورة بنجاح", { id: toastId });
-      } else {
+      const uploadedUrl = safeExternalUrl(data.data?.url);
+      if (!response.ok || !data.success || !uploadedUrl) {
         throw new Error(data.error?.message || "فشل الرفع");
       }
+      setNewProduct((prev) => ({ ...prev, image_url: uploadedUrl }));
+      toast.success("تم رفع الصورة بنجاح", { id: toastId });
     } catch (err: any) {
       toast.error("فشل رفع الصورة: " + err.message, { id: toastId });
     } finally {
@@ -616,7 +606,11 @@ export default function Admin() {
     if (!files.length) return;
 
     const validFiles = files.filter((f) => f.size <= 3 * 1024 * 1024 && f.type.startsWith("image/"));
-    
+    if (!validFiles.length) {
+      toast.error("لم يتم اختيار صور صالحة (الحد الأقصى 3MB للصورة)");
+      return;
+    }
+
     const apiUrl = import.meta.env.VITE_IMGBB_API_URL;
     const apiKey = import.meta.env.VITE_IMGBB_API_KEY;
 
@@ -627,22 +621,18 @@ export default function Admin() {
 
     setUploadingImage(true);
     const toastId = toast.loading(`جاري رفع ${validFiles.length} صورة...`);
-    try {
-      const urls = await Promise.all(
-        validFiles.map(async (file) => {
-          const compressedFile = await compressImage(file);
-          const formData = new FormData();
-          formData.append("image", compressedFile, "gallery.jpg");
-          const response = await fetch(`${apiUrl}?key=${apiKey}`, {
-            method: "POST",
-            body: formData
-          });
-          const resData = await response.json();
-          if (!resData.success) throw new Error("فشل رفع أحد الملفات");
-          return resData.data.url;
-        })
-      );
+    const uploadImage = async (file: File, filename: string) => {
+      const compressedFile = await compressImage(file);
+      const formData = new FormData();
+      formData.append("image", compressedFile, filename);
+      const response = await fetch(`${apiUrl}?key=${apiKey}`, { method: "POST", body: formData });
+      const data = await response.json();
+      if (!response.ok || !data.success || typeof data.data?.url !== "string") throw new Error(data.error?.message || "فشل الرفع");
+      return safeExternalUrl(data.data.url);
+    };
 
+    try {
+      const urls = (await Promise.all(validFiles.map((file, index) => uploadImage(file, `gallery-${index}.jpg`)))).filter(Boolean);
       setNewProduct((prev) => ({ ...prev, images: [...(prev.images || []), ...urls] }));
       toast.success("تم تحديث معرض الصور بنجاح", { id: toastId });
     } catch (err: any) {
@@ -663,22 +653,26 @@ export default function Admin() {
       return;
     }
 
-    if (!Number.isFinite(stock) || stock < 0) {
-      toast.error("يرجى إدخال كمية صحيحة (رقم غير سالب)");
+    const costPrice = Number(newProduct.cost_price_egp || 0);
+    const profit = Number(newProduct.profit_egp || 0);
+    if (!Number.isFinite(stock) || stock < 0 || !Number.isInteger(stock) || stock > 100000 || !Number.isFinite(costPrice) || costPrice < 0 || !Number.isFinite(profit) || profit < 0) {
+      toast.error("يرجى إدخال قيم صحيحة للسعر والتكلفة والربح والمخزون");
       return;
     }
 
     const product: Product = {
       id: newProduct.id || nanoid(),
       name: sanitizeInput(name),
-      cost_price_egp: Number(newProduct.cost_price_egp) || 0,
-      profit_egp: Number(newProduct.profit_egp) || 0,
+      cost_price_egp: costPrice,
+      profit_egp: profit,
       price_egp: price,
       category: sanitizeInput(newProduct.category || "عام") || "عام",
       in_stock: (newProduct.in_stock ?? true) && stock > 0,
       description: sanitizeInput(newProduct.description || ""),
       image_url: imageUrl,
       images: (newProduct.images || []).map((u) => safeExternalUrl(u)).filter(Boolean),
+      size: newProduct.size,
+      sizes: newProduct.sizes || (newProduct.size ? [newProduct.size] : undefined),
       stock_quantity: stock,
     };
 
@@ -694,7 +688,7 @@ export default function Admin() {
     await db.saveProducts(updatedList);
     setProducts(updatedList);
     setIsAddOpen(false);
-    setNewProduct({ name: "", cost_price_egp: 0, profit_egp: 0, price_egp: 0, category: "", description: "", in_stock: true, image_url: "", stock_quantity: 10 });
+    setNewProduct({ name: "", cost_price_egp: 0, profit_egp: 0, price_egp: 0, category: "", description: "", size: undefined, sizes: ["M", "L", "XL", "XXL", "XXXL"], in_stock: true, image_url: "", stock_quantity: 10 });
   }, [newProduct, products]);
 
   if (!isAuthenticated) {
@@ -702,7 +696,7 @@ export default function Admin() {
       <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 relative overflow-hidden" dir="rtl">
         <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-primary/5 rounded-full blur-[100px] -z-10 translate-x-1/2 -translate-y-1/2" />
         <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-primary/5 rounded-full blur-[100px] -z-10 -translate-x-1/2 translate-y-1/2" />
-        
+
         <div className="w-full max-w-md bg-card/80 backdrop-blur-xl border border-border/50 rounded-3xl p-8 sm:p-10 shadow-2xl">
           <div className="text-center mb-8">
             <div className="mx-auto w-20 h-20 bg-primary/10 rounded-2xl flex items-center justify-center mb-6 shadow-inner rotate-3">
@@ -728,70 +722,70 @@ export default function Admin() {
               </div>
             ) : (
               <>
-            {!hasFirebase && (
-              <div className="mb-4 bg-red-500/10 border border-red-500/20 text-red-800 dark:text-red-200 p-3 rounded-xl text-sm">
-                <strong>Firebase غير متصل.</strong>
-                <div className="mt-1">لأسباب أمنية، تم تعطيل تسجيل الدخول المحلي. قم بضبط مفاتيح Firebase في .env ثم أعد النشر.</div>
-              </div>
-            )}
+                {!hasFirebase && (
+                  <div className="mb-4 bg-red-500/10 border border-red-500/20 text-red-800 dark:text-red-200 p-3 rounded-xl text-sm">
+                    <strong>Firebase غير متصل.</strong>
+                    <div className="mt-1">لأسباب أمنية، تم تعطيل تسجيل الدخول المحلي. قم بضبط مفاتيح Firebase في .env ثم أعد النشر.</div>
+                  </div>
+                )}
 
-            {authErrors.general && (
-              <div className="mb-6 bg-red-500/10 border border-red-500/20 text-red-600 p-3 rounded-xl text-sm font-bold text-center animate-in fade-in">
-                {authErrors.general}
-              </div>
-            )}
+                {authErrors.general && (
+                  <div className="mb-6 bg-red-500/10 border border-red-500/20 text-red-600 p-3 rounded-xl text-sm font-bold text-center animate-in fade-in">
+                    {authErrors.general}
+                  </div>
+                )}
 
-            <form onSubmit={handleLogin} className="space-y-6">
-              <div className="space-y-2">
-                <Label htmlFor="email" className="font-bold opacity-80">البريد الإلكتروني للإدارة</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  dir="ltr"
-                  className={`text-left h-12 rounded-xl transition-all ${authErrors.email ? 'border-red-500 focus-visible:ring-red-500/20' : 'bg-muted/30 focus-visible:bg-transparent'}`}
-                  disabled={!hasFirebase}
-                  autoComplete="username"
-                />
-                {authErrors.email && <p className="text-red-500 text-xs mt-1 font-medium">{authErrors.email}</p>}
-              </div>
-              
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="password" className="font-bold opacity-80">كلمة المرور</Label>
-                  <button
-                    type="button"
-                    onClick={() => toast.info("لتغيير كلمة المرور استخدم إعادة تعيين كلمة المرور من Firebase Auth")}
-                    className="text-xs font-bold text-primary hover:underline opacity-80"
-                  >
-                    نسيت كلمة المرور؟
-                  </button>
-                </div>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  dir="ltr"
-                  className={`text-left h-12 rounded-xl tracking-widest transition-all ${authErrors.password ? 'border-red-500 focus-visible:ring-red-500/20' : 'bg-muted/30 focus-visible:bg-transparent'}`}
-                  disabled={!hasFirebase}
-                  autoComplete="current-password"
-                />
-                {authErrors.password && <p className="text-red-500 text-xs mt-1 font-medium">{authErrors.password}</p>}
-              </div>
-              
-              <div className="pt-2 space-y-3">
-                <Button type="submit" className="w-full h-14 text-lg font-bold rounded-xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all" disabled={authLoading || !hasFirebase}>
-                  {authLoading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent mx-auto"></div> : "تسجيل الدخول للوحة التحكم"}
-                </Button>
-                <Button type="button" variant="ghost" className="w-full h-12 rounded-xl font-semibold text-muted-foreground" asChild>
-                  <Link href="/">العودة للمتجر الرئيسي</Link>
-                </Button>
-              </div>
-            </form>
-            </>
+                <form onSubmit={handleLogin} className="space-y-6">
+                  <div className="space-y-2">
+                    <Label htmlFor="email" className="font-bold opacity-80">البريد الإلكتروني للإدارة</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      dir="ltr"
+                      className={`text-left h-12 rounded-xl transition-all ${authErrors.email ? 'border-red-500 focus-visible:ring-red-500/20' : 'bg-muted/30 focus-visible:bg-transparent'}`}
+                      disabled={!hasFirebase}
+                      autoComplete="username"
+                    />
+                    {authErrors.email && <p className="text-red-500 text-xs mt-1 font-medium">{authErrors.email}</p>}
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="password" className="font-bold opacity-80">كلمة المرور</Label>
+                      <button
+                        type="button"
+                        onClick={() => toast.info("لتغيير كلمة المرور استخدم إعادة تعيين كلمة المرور من Firebase Auth")}
+                        className="text-xs font-bold text-primary hover:underline opacity-80"
+                      >
+                        نسيت كلمة المرور؟
+                      </button>
+                    </div>
+                    <Input
+                      id="password"
+                      type="password"
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      dir="ltr"
+                      className={`text-left h-12 rounded-xl tracking-widest transition-all ${authErrors.password ? 'border-red-500 focus-visible:ring-red-500/20' : 'bg-muted/30 focus-visible:bg-transparent'}`}
+                      disabled={!hasFirebase}
+                      autoComplete="current-password"
+                    />
+                    {authErrors.password && <p className="text-red-500 text-xs mt-1 font-medium">{authErrors.password}</p>}
+                  </div>
+
+                  <div className="pt-2 space-y-3">
+                    <Button type="submit" className="w-full h-14 text-lg font-bold rounded-xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all" disabled={authLoading || !hasFirebase}>
+                      {authLoading ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent mx-auto"></div> : "تسجيل الدخول للوحة التحكم"}
+                    </Button>
+                    <Button type="button" variant="ghost" className="w-full h-12 rounded-xl font-semibold text-muted-foreground" asChild>
+                      <Link href="/">العودة للمتجر الرئيسي</Link>
+                    </Button>
+                  </div>
+                </form>
+              </>
             )}
           </div>
         </div>
@@ -925,7 +919,7 @@ export default function Admin() {
                   open={isAddOpen}
                   onOpenChange={(open) => {
                     setIsAddOpen(open);
-                    if (!open) setNewProduct({ name: "", cost_price_egp: 0, profit_egp: 0, price_egp: 0, category: "", description: "", in_stock: true, image_url: "", stock_quantity: 10 });
+                    if (!open) setNewProduct({ name: "", cost_price_egp: 0, profit_egp: 0, price_egp: 0, category: "", description: "", size: undefined, sizes: ["M", "L", "XL", "XXL", "XXXL"], in_stock: true, image_url: "", stock_quantity: 10 });
                   }}
                 >
                   <DialogTrigger asChild>
@@ -959,13 +953,14 @@ export default function Admin() {
                         <div className="flex flex-col gap-2">
                           <Input type="file" accept="image/*" multiple onChange={handleGalleryUpload} disabled={uploadingImage} />
                           {newProduct.images && newProduct.images.length > 0 && (
-                            <div className="flex flex-wrap gap-2 mt-2">
+                            <div className="flex flex-col gap-2 mt-2">
                               {newProduct.images.map((img, idx) => (
-                                <div key={idx} className="relative group">
+                                <div key={idx} className="relative flex w-full items-center gap-2 rounded-md border bg-muted/20 p-1 group">
                                   <img src={img} className="h-12 w-12 object-cover rounded-md border" alt={`Gallery ${idx}`} loading="lazy" referrerPolicy="no-referrer" />
+                                  <span className="text-xs text-muted-foreground">الصورة الإضافية {idx + 1}</span>
                                   <button
                                     type="button"
-                                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    className="mr-auto rounded-full bg-red-500 p-1 text-white opacity-80 transition-opacity hover:opacity-100"
                                     onClick={() => {
                                       const filtered = (newProduct.images || []).filter((_, i) => i !== idx);
                                       setNewProduct((prev) => ({ ...prev, images: filtered }));
@@ -985,7 +980,7 @@ export default function Admin() {
                         <Input value={newProduct.name} onChange={(e) => setNewProduct((prev) => ({ ...prev, name: e.target.value }))} />
                       </div>
 
-                      <div className="grid grid-cols-3 gap-4">
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                         <div className="grid gap-2">
                           <Label>التكلفة الأصلية</Label>
                           <Input type="number" value={newProduct.cost_price_egp || ""} onChange={(e) => {
@@ -1006,11 +1001,11 @@ export default function Admin() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div className="grid gap-2">
                           <Label>التصنيف</Label>
-                          <Select 
-                            value={newProduct.category || "عام"} 
+                          <Select
+                            value={newProduct.category || "عام"}
                             onValueChange={(val) => setNewProduct((prev) => ({ ...prev, category: val }))}
                           >
                             <SelectTrigger className="bg-background">
@@ -1026,7 +1021,40 @@ export default function Admin() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label>مقاس الملابس (اختياري)</Label>
+                        <Select value={newProduct.size || "none"} onValueChange={(value) => setNewProduct((prev) => ({ ...prev, size: value === "none" ? undefined : value as Product["size"] }))}>
+                          <SelectTrigger className="bg-background"><SelectValue placeholder="اختر المقاس" /></SelectTrigger>
+                          <SelectContent className="bg-background">
+                            <SelectItem value="none">بدون مقاس</SelectItem>
+                            {(["M", "L", "XL", "XXL", "XXXL"] as const).map((size) => <SelectItem key={size} value={size}>{size}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label>المقاسات المتاحة للعميل</Label>
+                        <div className="grid grid-cols-2 gap-2 rounded-xl border bg-muted/20 p-3 sm:grid-cols-5">
+                          {(["M", "L", "XL", "XXL", "XXXL"] as const).map((size: ProductSize) => (
+                            <label key={size} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border bg-background px-3 text-sm font-bold">
+                              <input
+                                type="checkbox"
+                                checked={(newProduct.sizes || []).includes(size)}
+                                onChange={(event) => setNewProduct((prev) => ({
+                                  ...prev,
+                                  sizes: event.target.checked
+                                    ? [...(prev.sizes || []), size].filter((value, index, values) => values.indexOf(value) === index)
+                                    : (prev.sizes || []).filter((value) => value !== size)
+                                }))}
+                                className="h-4 w-4 accent-primary"
+                              />
+                              {size}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div className="grid gap-2">
                           <Label>كمية المخزون</Label>
                           <Input type="number" value={newProduct.stock_quantity ?? 10} onChange={(e) => setNewProduct((prev) => ({ ...prev, stock_quantity: Number(e.target.value) }))} />
@@ -1180,7 +1208,7 @@ export default function Admin() {
                                 {o.paymentMethod === "online" ? (
                                   <div className="space-y-2">
                                     <Badge className="bg-primary/20 text-primary hover:bg-primary/20">أونلاين (كاش)</Badge>
-                                    <div className="text-[10px] font-bold text-muted-foreground">{o.onlinePaymentMode === "partial" ? "دفع جزء كعربون" : "دفع المبلغ بالكامل"}</div>
+                                    <div className="text-[10px] font-bold text-muted-foreground">دفع المبلغ بالكامل</div>
                                     <div className="font-mono text-xs" dir="ltr">{normalizePhone(o.senderPhone || "")}</div>
                                     {o.transferredAmount && (
                                       <div className="text-xs font-bold text-green-600 dark:text-green-400">
@@ -1226,13 +1254,9 @@ export default function Admin() {
                                         <div className="text-xs text-red-500 font-bold bg-red-500/10 p-1.5 rounded text-center w-full">
                                           بيانات التحويل ناقصة
                                         </div>
-                                      ) : o.paymentMethod === "online" && o.onlinePaymentMode === "full" && (o.transferredAmount || 0) < o.total ? (
+                                      ) : o.paymentMethod === "online" && (o.transferredAmount || 0) < o.total ? (
                                         <div className="text-xs text-red-500 font-bold bg-red-500/10 p-1.5 rounded text-center w-full">
                                           المبلغ المحول غير كافٍ (المطلوب {o.total})
-                                        </div>
-                                      ) : o.paymentMethod === "online" && o.onlinePaymentMode === "partial" && (o.transferredAmount || 0) !== (settings.depositAmount || 0) ? (
-                                        <div className="text-xs text-red-500 font-bold bg-red-500/10 p-1.5 rounded text-center w-full">
-                                          يجب أن يكون المبلغ المحول هو العربون فقط ({settings.depositAmount} ج.م)
                                         </div>
                                       ) : (
                                         <Button size="sm" className="gap-2 bg-blue-600 hover:bg-blue-700 text-white h-8 text-xs flex-1" onClick={async () => {
@@ -1246,13 +1270,13 @@ export default function Admin() {
                                       }}>رفض</Button>
                                     </div>
                                   )}
-                                  
+
                                   {o.status === "prepared" && (
                                     <Button size="sm" className="gap-2 bg-amber-600 hover:bg-amber-700 text-white h-8 text-xs w-fit" onClick={async () => {
                                       await db.updateOrderStatus(o.id, "shipped");
                                       await refreshAll();
                                       toast.success("تم تحديث الحالة إلى: قيد الشحن");
-                                    }}><Package className="h-3 w-3"/> شحن الطلب</Button>
+                                    }}><Package className="h-3 w-3" /> شحن الطلب</Button>
                                   )}
 
                                   {o.status === "shipped" && (
@@ -1264,20 +1288,20 @@ export default function Admin() {
                                           toast.success("تم توصيل الطلب بنجاح");
                                         } catch (err: any) { toast.error("خطأ: " + err.message); }
                                       }
-                                    }}><CheckCircle2 className="h-3 w-3"/> تم التوصيل</Button>
+                                    }}><CheckCircle2 className="h-3 w-3" /> تم التوصيل</Button>
                                   )}
 
                                   <Badge variant={
-                                    o.status === "completed" ? "default" : 
-                                    o.status === "shipped" ? "secondary" :
-                                    o.status === "prepared" ? "outline" :
-                                    o.status === "pending" ? "secondary" : "destructive"
+                                    o.status === "completed" ? "default" :
+                                      o.status === "shipped" ? "secondary" :
+                                        o.status === "prepared" ? "outline" :
+                                          o.status === "pending" ? "secondary" : "destructive"
                                   } className={`w-fit ${o.status === "shipped" ? "bg-amber-500/20 text-amber-700 hover:bg-amber-500/20" : o.status === "prepared" ? "border-blue-500/50 text-blue-600" : ""}`}>
-                                    {o.status === "completed" ? "مكتمل (تم التوصيل)" : 
-                                     o.status === "shipped" ? "قيد الشحن" :
-                                     o.status === "prepared" ? "تم التحضير" :
-                                     o.status === "pending" ? "قيد المراجعة" :
-                                     o.status === "cancelled" ? "ملغي (عميل)" : "مرفوض (إدارة)"}
+                                    {o.status === "completed" ? "مكتمل (تم التوصيل)" :
+                                      o.status === "shipped" ? "قيد الشحن" :
+                                        o.status === "prepared" ? "تم التحضير" :
+                                          o.status === "pending" ? "قيد المراجعة" :
+                                            o.status === "cancelled" ? "ملغي (عميل)" : "مرفوض (إدارة)"}
                                   </Badge>
                                 </div>
                               </TableCell>
@@ -1368,9 +1392,9 @@ export default function Admin() {
                               <Badge variant={tier === "ذهبي" ? "default" : tier === "فضي" ? "secondary" : "outline"}>{tier}</Badge>
                             </TableCell>
                             <TableCell className="text-right">
-                               <Button size="icon" variant="ghost" className="text-red-500" onClick={() => deleteUser(u.id)}>
-                                 <Trash2 className="h-4 w-4" />
-                               </Button>
+                              <Button size="icon" variant="ghost" className="text-red-500" onClick={() => deleteUser(u.id)}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
                             </TableCell>
                           </TableRow>
                         );
@@ -1446,9 +1470,9 @@ export default function Admin() {
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>إدارة فئات المنتجات</CardTitle>
                 <div className="flex gap-2">
-                  <Input 
-                    placeholder="اسم الفئة الجديدة" 
-                    value={newCategoryName} 
+                  <Input
+                    placeholder="اسم الفئة الجديدة"
+                    value={newCategoryName}
                     onChange={(e) => setNewCategoryName(e.target.value)}
                     className="max-w-xs"
                   />
@@ -1511,15 +1535,6 @@ export default function Admin() {
                 </div>
 
                 <div className="space-y-4 bg-muted/50 p-4 rounded-xl border">
-                  <div className="flex items-center gap-2 mb-2"><WalletCards className="h-5 w-5 text-blue-600" /><h3 className="font-semibold text-lg">نظام العربون</h3></div>
-                  <p className="text-sm text-muted-foreground mb-4">حدد قيمة العربون الافتراضية المطلوب دفعها عند اختيار الدفع الجزئي أونلاين.</p>
-                  <div className="space-y-2 max-w-sm">
-                    <Label htmlFor="deposit">قيمة العربون (ج.م)</Label>
-                    <Input id="deposit" type="number" min="0" value={settings.depositAmount || 0} onChange={(e) => setSettings({ ...settings, depositAmount: Number(e.target.value) })} />
-                  </div>
-                </div>
-
-                <div className="space-y-4 bg-muted/50 p-4 rounded-xl border">
                   <div className="flex items-center gap-2 mb-2"><DollarSign className="h-5 w-5 text-purple-600" /><h3 className="font-semibold text-lg">بيانات السحب والتحويل</h3></div>
                   <p className="text-sm text-muted-foreground mb-4">أضف رقم الحساب البنكي أو محفظتك الرقمية للتحويلات والسحب.</p>
                   <div className="space-y-2 max-w-sm">
@@ -1571,7 +1586,7 @@ export default function Admin() {
                 <p className="text-sm text-muted-foreground">
                   تحذير: هذه العمليات نهائية ولا يمكن التراجع عنها. سيتم مسح كافة البيانات المختارة من قاعدة البيانات.
                 </p>
-                
+
                 <div className="flex flex-wrap gap-3">
                   <Button variant="outline" className="border-red-200 text-red-600 hover:bg-red-100" onClick={() => resetFinance("orders")}>
                     مسح كافة الطلبات

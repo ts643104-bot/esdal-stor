@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ShoppingCart, Trash2, MessageCircle, ShieldCheck, Copy, Plus, Minus, CheckCircle, CalendarIcon, User, Image as ImageIcon } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { MapPicker } from "@/components/MapPicker";
@@ -20,6 +21,7 @@ import { toast } from "sonner";
 import { EGYPT_GOVERNORATES } from "@/lib/constants";
 import { hasFirebase, storage } from "@/lib/firebase";
 import { getActiveWhatsappNumber } from "@/lib/utils";
+import { cleanUserText, isValidEgyptianPhone, normalizeEgyptianPhone } from "@/lib/validation";
 
 const VODAFONE_CASH_NUMBER = "01140971703";
 
@@ -40,12 +42,10 @@ function buildWhatsappMessage(
   orderId: string,
   note?: string,
   receiptUrl?: string,
-  transferredAmount?: number | "",
-  onlinePaymentMode?: "full" | "partial",
-  depositAmount?: number
+  transferredAmount?: number | ""
 ) {
-  const paymentText = paymentMethod === "cod" ? "الدفع عند الاستلام (COD)" : `أونلاين (${onlinePaymentMode === "partial" ? "عربون: " + (depositAmount || 0) + " ج.م" : "المبلغ بالكامل"})`;
-  
+  const paymentText = paymentMethod === "cod" ? "الدفع عند الاستلام (COD)" : "دفع أونلاين كامل";
+
   const lines = [
     "السلام عليكم، عايز/ة أعمل طلب من هلا اليسر:",
     `رقم الطلب (للمتابعة): *#${orderId}*`,
@@ -61,7 +61,7 @@ function buildWhatsappMessage(
     "الطلبات:",
     ...items.map(
       (it, i) =>
-        `${i + 1}) ${it.product.name} — الكمية: ${it.qty} — السعر: ${it.product.price_egp.toLocaleString("ar-EG")} ج.م`
+        `${i + 1}) ${it.product.name}${it.product.size ? ` — المقاس: ${it.product.size}` : ""} — الكمية: ${it.qty} — السعر: ${it.product.price_egp.toLocaleString("ar-EG")} ج.م`
     ),
     "",
     `قيمة المنتجات: ${subtotal.toLocaleString("ar-EG")} ج.م`,
@@ -95,7 +95,6 @@ export default function CartSheet() {
   const { user, profile } = useAuth();
   const { t, lang } = useLanguage();
   const [paymentMethod, setPaymentMethod] = useState<"cod" | "online">("cod");
-  const [onlinePaymentMode, setOnlinePaymentMode] = useState<"full" | "partial">("full");
   const [senderPhone, setSenderPhone] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -104,18 +103,18 @@ export default function CartSheet() {
   const [preferredTime, setPreferredTime] = useState("أي وقت");
   const [preferredDate, setPreferredDate] = useState<Date | undefined>(undefined);
   const [shippingType, setShippingType] = useState<"standard" | "express">("standard");
-  const [successData, setSuccessData] = useState<{ 
-    orderId: string; 
+  const [successData, setSuccessData] = useState<{
+    orderId: string;
     waUrl: string;
+    paymentMethod: "cod" | "online";
     details: {
       name: string;
       phone: string;
-      items: any[];
+      items: ReturnType<typeof useCart>["items"];
       total: number;
     }
   } | null>(null);
   const [discountPct, setDiscountPct] = useState(0);
-  const [depositAmount, setDepositAmount] = useState(100);
   const [whatsappNumbers, setWhatsappNumbers] = useState<string[]>([]);
   const [useLoyaltyPoints, setUseLoyaltyPoints] = useState(false);
   const [orderNote, setOrderNote] = useState("");
@@ -125,6 +124,10 @@ export default function CartSheet() {
   const [receiptUrl, setReceiptUrl] = useState("");
   const [transferredAmount, setTransferredAmount] = useState<number | "">("");
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [honeypot, setHoneypot] = useState(""); // Anti-bot honeypot field (hidden from humans)
 
   useEffect(() => {
     if (profile) {
@@ -139,17 +142,17 @@ export default function CartSheet() {
     import("@/lib/db").then(({ db }) => {
       db.getSettings().then(s => {
         setDiscountPct(s.discountPercentage || 0);
-        if (s.depositAmount) setDepositAmount(s.depositAmount);
         if (s.whatsappNumbers) setWhatsappNumbers(s.whatsappNumbers);
       });
     });
   }, []);
 
-  const isValidInfo = customerName.trim().length > 1 && customerAddress.trim().length > 5 && customerPhone.trim().length >= 10 && governorate !== "";
+  const isValidInfo = customerName.trim().length > 1 && customerAddress.trim().length > 5 && isValidEgyptianPhone(customerPhone) && governorate !== "";
+  const canSubmit = isValidInfo && acceptedTerms;
 
   const selectedGov = EGYPT_GOVERNORATES.find(g => g.name === governorate);
   const shippingCost = selectedGov ? selectedGov.cost + (shippingType === "express" ? 30 : 0) : 0;
-  
+
   const totalEarnedPoints = profile?.totalEarnedPoints || 0;
   let tierDiscountPct = 0;
   let currentTierName = "";
@@ -163,10 +166,10 @@ export default function CartSheet() {
     tierDiscountPct = 0;
     currentTierName = t("tier.bronze" as any) || "برونزي";
   }
-  
+
   const tierDiscountAmount = Math.round((cart.totalPrice * tierDiscountPct) / 100);
   const baseDiscountAmount = Math.round((cart.totalPrice * discountPct) / 100);
-  
+
   const userPoints = profile?.loyaltyPoints || 0;
   const maxPointsToRedeem = Math.floor(userPoints / 500) * 500;
   const pointsDiscount = useLoyaltyPoints ? Math.floor(maxPointsToRedeem / 50) : 0;
@@ -174,17 +177,33 @@ export default function CartSheet() {
   const totalDiscount = baseDiscountAmount + pointsDiscount + tierDiscountAmount + promoDiscountAmount;
 
   const finalTotal = Math.max(0, cart.totalPrice - totalDiscount + shippingCost);
-  const isValidOnline = paymentMethod === "cod" || (senderPhone.length >= 10 && senderPhone.startsWith("01") && receiptUrl && transferredAmount !== "");
-  
   const pointsEarned = Math.floor(cart.totalPrice / 10);
 
-  const handleCheckout = () => {
+  const handleCheckout = (confirmed = false) => {
+    if (isSubmitting) return;
+    const safeName = cleanUserText(customerName, 120);
+    const safeAddress = cleanUserText(customerAddress, 500);
+    const safeNote = cleanUserText(orderNote, 500);
+    const normalizedPhone = normalizeEgyptianPhone(customerPhone);
+
+    // Anti-bot honeypot: hidden field must stay empty
+    if (honeypot.trim() !== "") {
+      toast.error("تم رفض الطلب تلقائياً (نشاط غير طبيعي)");
+      return;
+    }
+
+    // Mandatory terms & conditions checkbox
+    if (!acceptedTerms) {
+      toast.error("يجب الموافقة على الشروط والأحكام قبل تأكيد الطلب");
+      return;
+    }
+
     if (!user) {
       window.location.href = "#/profile";
       return;
     }
     if (!isValidInfo) {
-      toast.error("يرجى إكمال جميع بيانات التوصيل واختيار المحافظة");
+      toast.error("يرجى إدخال اسم صحيح، رقم هاتف مصري صحيح، عنوان تفصيلي، واختيار المحافظة");
       return;
     }
     if (paymentMethod === "online") {
@@ -206,19 +225,25 @@ export default function CartSheet() {
       return;
     }
 
+    if (paymentMethod === "cod" && !confirmed) {
+      setIsConfirmOpen(true);
+      return;
+    }
+
+    setIsSubmitting(true);
     import("@/lib/db").then(async ({ db }) => {
       const dateStr = preferredDate ? preferredDate.toLocaleDateString("ar-EG", { dateStyle: "long" }) : "أي يوم";
       const promoText = appliedPromo ? ` [كوبون: ${appliedPromo.code}]` : "";
       const pointsToRedeem = useLoyaltyPoints ? maxPointsToRedeem : 0;
-      
-      const orderId = await db.addOrder(
-        cart.items, finalTotal, paymentMethod, senderPhone, customerName, 
-        customerAddress, customerPhone, governorate, shippingCost, 
-        `${shippingType === "express" ? "[Express] " : ""}${preferredTime}${promoText}`, 
-        totalDiscount, dateStr, user?.uid, pointsEarned, pointsToRedeem, receiptUrl, orderNote, Number(transferredAmount) || undefined,
-        paymentMethod === "online" ? onlinePaymentMode : undefined
+
+      const requestedTotal = finalTotal;
+    const orderId = await db.addOrder(
+        cart.items, requestedTotal, paymentMethod, senderPhone, safeName,
+        safeAddress, normalizedPhone, governorate, shippingCost,
+        `${shippingType === "express" ? "[Express] " : ""}${preferredTime}${promoText}`,
+        totalDiscount, dateStr, user?.uid, pointsEarned, pointsToRedeem, receiptUrl, safeNote, Number(transferredAmount) || undefined, true, new Date().toISOString()
       );
-      
+
       const itemsList = cart.items.map(it => `${it.qty}x ${it.product.name} (${it.product.price_egp} ج.م)`).join("\n");
       const emailBody = {
         _subject: `طلب جديد من هلا اليسر - رقم #${orderId}`,
@@ -229,7 +254,7 @@ export default function CartSheet() {
         "العنوان ورابط الموقع": customerAddress,
         "تاريخ التوصيل": dateStr,
         "وقت التوصيل": preferredTime,
-        "طريقة الدفع": paymentMethod === "cod" ? "عند الاستلام" : `أونلاين (${onlinePaymentMode === "full" ? "المبلغ بالكامل" : "جزء كعربون والباقي عند الاستلام"}) - رقم: ` + senderPhone,
+        "طريقة الدفع": paymentMethod === "cod" ? "عند الاستلام" : "أونلاين - المبلغ بالكامل - رقم: " + senderPhone,
         "المنتجات": itemsList,
         "قيمة المنتجات": cart.totalPrice + " ج.م",
         "الخصم": totalDiscount > 0 ? totalDiscount + " ج.م" : "لا يوجد",
@@ -244,19 +269,43 @@ export default function CartSheet() {
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify(emailBody)
       }).catch(err => console.error("Failed to send email notification", err));
-      
-      const waMsg = buildWhatsappMessage(cart.items, cart.totalPrice, shippingCost, totalDiscount, finalTotal, paymentMethod, senderPhone, customerName, customerAddress, customerPhone, governorate, `${shippingType === "express" ? "[Express] " : ""}${preferredTime}`, dateStr, orderId, orderNote, receiptUrl, transferredAmount, onlinePaymentMode, depositAmount);
+
+      try {
+        const customers = (await db.getAllUsers()).filter((customer) => customer.termsAccepted);
+        const customerCount = customers.length;
+        const batchNumber = Math.floor(customerCount / 1000);
+        const notificationKey = `terms-consent-email-${batchNumber}`;
+        if (customerCount > 0 && customerCount % 1000 === 0 && !localStorage.getItem(notificationKey)) {
+          await fetch("https://formsubmit.co/ajax/tkalikrombo@gmail.com", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({
+              _subject: `دفعة موافقات الشروط رقم ${batchNumber}`,
+              "عدد العملاء الموافقين": customerCount,
+              "رقم الدفعة": batchNumber,
+              "تاريخ الوصول": new Date().toLocaleString("ar-EG")
+            })
+          });
+          localStorage.setItem(notificationKey, "sent");
+        }
+      } catch (consentError) {
+        console.error("Failed to send terms consent batch notification", consentError);
+      }
+
+      const waMsg = buildWhatsappMessage(cart.items, cart.totalPrice, shippingCost, totalDiscount, finalTotal, paymentMethod, senderPhone, safeName, safeAddress, normalizedPhone, governorate, `${shippingType === "express" ? "[Express] " : ""}${preferredTime}`, dateStr, orderId, safeNote, receiptUrl, transferredAmount);
       const activePhone = getActiveWhatsappNumber(whatsappNumbers);
       const waUrl = `https://wa.me/${activePhone}?text=${encodeURIComponent(waMsg)}`;
-      
-      setSuccessData({ 
-        orderId, waUrl,
+
+      setSuccessData({
+        orderId, waUrl, paymentMethod,
         details: { name: customerName, phone: customerPhone, items: [...cart.items], total: finalTotal }
       });
-      
+
       setTimeout(() => { window.open(waUrl, "_blank"); }, 600);
       cart.clear();
-    });
+    }).catch(() => {
+      toast.error("تعذر تسجيل الطلب حاليًا، حاول مرة أخرى");
+    }).finally(() => setIsSubmitting(false));
   };
 
   const copyNumber = () => {
@@ -268,16 +317,15 @@ export default function CartSheet() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("الصورة كبيرة جداً. يرجى اختيار صورة أقل من 5 ميجابايت");
+    if (!file.type.startsWith("image/")) {
+      toast.error("يجب اختيار ملف صورة صالح");
       return;
     }
 
+    const apiUrl = import.meta.env.VITE_IMGBB_API_URL || "https://api.imgbb.com/1/upload";
+    const apiKey = import.meta.env.VITE_IMGBB_API_KEY;
 
-    const apiUrl = "https://api.imgbb.com/1/upload" ;
-    const apiKey = "c517290f9573727f0188b26c07b3ecbf" ;
-
-    if (!apiUrl || !apiKey) {
+    if (!apiKey) {
       toast.error("عذراً، خدمة رفع الصور غير متوفرة حالياً");
       return;
     }
@@ -287,12 +335,12 @@ export default function CartSheet() {
     try {
       const formData = new FormData();
       formData.append("image", file);
-      
+
       const response = await fetch(`${apiUrl}?key=${apiKey}`, {
         method: "POST",
         body: formData
       });
-      
+
       const data = await response.json();
       if (data.success) {
         setReceiptUrl(data.data.url);
@@ -334,9 +382,11 @@ export default function CartSheet() {
                 <div className="mx-auto h-16 w-16 bg-green-500/20 text-green-600 rounded-full flex items-center justify-center shadow-lg shadow-green-500/10">
                   <CheckCircle className="h-8 w-8" />
                 </div>
-                <h2 className="text-2xl font-black font-display text-foreground">تم تسجيل طلبك! 🎉</h2>
+                <h2 className="text-2xl font-black font-display text-foreground">
+                  {successData.paymentMethod === "cod" ? "تم تأكيد طلب الدفع عند الاستلام!" : "تم تسجيل طلبك بنجاح!"}
+                </h2>
                 <p className="text-muted-foreground text-xs font-bold px-4">
-                  برجاء مراجعة تفاصيل طلبك والضغط على الزر بالأسفل لإرساله عبر الواتساب.
+                  {successData.paymentMethod === "cod" ? "طلبك محفوظ لدينا. أرسل التفاصيل عبر واتساب لتأكيد التوصيل مع المتجر." : "راجع تفاصيل طلبك ثم أرسلها عبر واتساب لإتمام المتابعة."}
                 </p>
               </div>
 
@@ -376,7 +426,7 @@ export default function CartSheet() {
             <div className="pt-4 border-t bg-background mt-auto pb-6 space-y-3">
               <Button onClick={() => window.open(successData.waUrl, "_blank")} className="w-full h-14 text-lg font-bold gap-3 rounded-2xl bg-[#25D366] hover:bg-[#20ba56] text-white shadow-xl shadow-green-500/20">
                 <MessageCircle className="h-6 w-6" />
-                إرسال الطلب عبر واتساب 
+                {successData.paymentMethod === "cod" ? "إرسال تأكيد الطلب عبر واتساب" : "إرسال الطلب عبر واتساب"}
               </Button>
               <Button variant="ghost" onClick={() => { setSuccessData(null); window.location.href = "#/"; }} className="w-full text-muted-foreground font-bold h-10">
                 العودة للتسوق
@@ -407,15 +457,16 @@ export default function CartSheet() {
                         <div className="flex-1 flex flex-col justify-between min-h-[80px]">
                           <div>
                             <div className="font-semibold leading-snug">{it.product.name}</div>
+                            {it.product.size && <div className="text-xs text-muted-foreground mt-1">المقاس: {it.product.size}</div>}
                             <div className="text-sm font-bold text-primary mt-1">{(it.qty * it.product.price_egp).toLocaleString("ar-EG")} ج.م</div>
                           </div>
                           <div className="flex items-center justify-between mt-1">
                             <div className="flex items-center gap-2 bg-background/50 rounded-lg p-0.5 border border-border/60">
-                              <Button size="icon" variant="ghost" onClick={() => cart.dec(it.product.id)} className="h-8 w-8 text-muted-foreground"><Minus className="h-4 w-4" /></Button>
+                              <Button size="icon" variant="ghost" onClick={() => cart.dec(it.product.id, it.product.size)} className="h-8 w-8 text-muted-foreground"><Minus className="h-4 w-4" /></Button>
                               <span className="text-sm font-bold min-w-6 text-center">{it.qty}</span>
-                              <Button size="icon" variant="ghost" onClick={() => cart.add(it.product)} className="h-8 w-8 text-primary"><Plus className="h-4 w-4" /></Button>
+                              <Button size="icon" variant="ghost" onClick={() => cart.add(it.product, it.product.size)} className="h-8 w-8 text-primary"><Plus className="h-4 w-4" /></Button>
                             </div>
-                            <Button size="icon" variant="ghost" onClick={() => cart.remove(it.product.id)} className="h-9 w-9 text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
+                            <Button size="icon" variant="ghost" onClick={() => cart.remove(it.product.id, it.product.size)} className="h-9 w-9 text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
                           </div>
                         </div>
                       </div>
@@ -539,22 +590,6 @@ export default function CartSheet() {
                             <div className="flex items-center justify-between p-4"><div className="flex items-center gap-3"><RadioGroupItem value="online" id="online" /><Label htmlFor="online" className="font-bold cursor-pointer">فودافون كاش / إنستاباي</Label></div></div>
                             {paymentMethod === "online" && (
                               <div className="p-4 bg-muted/10 border-t space-y-4 animate-in slide-in-from-top-2">
-                                <div className="space-y-3 mb-4">
-                                  <Label className="text-xs font-bold opacity-70">نوع الدفع</Label>
-                                  <RadioGroup value={onlinePaymentMode} onValueChange={(v: any) => setOnlinePaymentMode(v)} className="flex flex-col sm:flex-row gap-2">
-                                    <div className={`flex items-center gap-2 border p-3 rounded-lg flex-1 cursor-pointer transition-colors ${onlinePaymentMode === "full" ? "border-primary bg-primary/5" : "bg-background"}`} onClick={() => setOnlinePaymentMode("full")}>
-                                      <RadioGroupItem value="full" id="full_pay" />
-                                      <Label htmlFor="full_pay" className="text-xs cursor-pointer font-bold">دفع المبلغ بالكامل أونلاين</Label>
-                                    </div>
-                                    <div className={`flex items-center gap-2 border p-3 rounded-lg flex-1 cursor-pointer transition-colors ${onlinePaymentMode === "partial" ? "border-primary bg-primary/5" : "bg-background"}`} onClick={() => setOnlinePaymentMode("partial")}>
-                                      <RadioGroupItem value="partial" id="partial_pay" />
-                                      <div className="flex flex-col gap-0.5">
-                                        <Label htmlFor="partial_pay" className="text-xs cursor-pointer font-bold">دفع عربون والباقي عند الاستلام</Label>
-                                        <span className="text-[10px] text-primary font-bold">قيمة العربون: {depositAmount} ج.م</span>
-                                      </div>
-                                    </div>
-                                  </RadioGroup>
-                                </div>
                                 <div className="bg-background p-3 rounded-lg border border-dashed border-primary/40 text-center">
                                   <p className="text-[10px] font-bold text-muted-foreground mb-1">حول المبلغ إلى الرقم:</p>
                                   <div className="flex items-center justify-center gap-2">
@@ -591,16 +626,57 @@ export default function CartSheet() {
             </div>
 
             {cart.items.length > 0 && user && (
-              <div className="pt-4 border-t bg-background mt-auto pb-6 px-1">
-                <Button className="w-full h-14 text-lg font-black gap-3 rounded-2xl shadow-xl shadow-primary/20" onClick={handleCheckout} disabled={!isValidInfo}>
+              <div className="pt-4 border-t bg-background mt-auto pb-6 px-1 space-y-3">
+                {/* Anti-bot honeypot: hidden from humans, bots fill it automatically */}
+                <div className="hidden" aria-hidden="true">
+                  <label htmlFor="website-field">لا تملأ هذا الحقل</label>
+                  <input
+                    id="website-field"
+                    type="text"
+                    tabIndex={-1}
+                    autoComplete="off"
+                    value={honeypot}
+                    onChange={(e) => setHoneypot(e.target.value)}
+                  />
+                </div>
+
+                <label className="flex items-start gap-3 cursor-pointer select-none rounded-xl border-border/60 bg-muted/20 p-3 transition-colors hover:bg-muted/40">
+                  <input
+                    type="checkbox"
+                    checked={acceptedTerms}
+                    onChange={(e) => setAcceptedTerms(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+                  />
+                  <span className="text-xs font-bold text-muted-foreground leading-relaxed">
+                    أوافق على <span className="text-primary underline-offset-2">الشروط والأحكام</span> وسياسة الاستبدال والاسترجاع الخاصة بالمتجر
+                  </span>
+                </label>
+
+                <Button className="w-full h-14 text-lg font-black gap-3 rounded-2xl shadow-xl shadow-primary/20" onClick={() => handleCheckout()} disabled={!canSubmit || isSubmitting}>
                   <MessageCircle className="h-6 w-6" />
-                  إتمام الطلب عبر واتساب
+                  {isSubmitting ? "جاري تسجيل الطلب..." : paymentMethod === "cod" ? "تأكيد طلب الدفع عند الاستلام" : "تأكيد الطلب أونلاين"}
                 </Button>
                 <Button variant="ghost" className="w-full text-muted-foreground text-xs font-bold mt-2" onClick={() => cart.clear()}>تفريغ السلة</Button>
               </div>
             )}
           </>
         )}
+        <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
+          <AlertDialogContent dir="rtl" className="rounded-3xl">
+            <AlertDialogHeader>
+              <AlertDialogTitle>تأكيد طلب الدفع عند الاستلام</AlertDialogTitle>
+              <AlertDialogDescription>
+                سيتم تسجيل الطلب بقيمة <strong className="text-primary">{finalTotal.toLocaleString("ar-EG")} ج.م</strong>، والدفع يكون عند استلامه. هل تريد المتابعة؟
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>مراجعة الطلب</AlertDialogCancel>
+              <AlertDialogAction onClick={() => { setIsConfirmOpen(false); handleCheckout(true); }}>
+                نعم، سجّل الطلب
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </SheetContent>
     </Sheet>
   );

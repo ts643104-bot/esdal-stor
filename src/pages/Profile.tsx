@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { auth, hasFirebase } from "@/lib/firebase";
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { db } from "@/lib/db";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { Link } from "wouter";
@@ -27,6 +27,7 @@ export default function Profile() {
   const [isRegistering, setIsRegistering] = useState(false);
   const [showRegSuccess, setShowRegSuccess] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
   const [authErrors, setAuthErrors] = useState<{email?: string; password?: string; general?: string}>({});
   
   const [name, setName] = useState("");
@@ -139,6 +140,32 @@ export default function Profile() {
       setAuthErrors(newErrors);
     } finally {
       setAuthLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !normalizedEmail.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
+      setAuthErrors({ email: "اكتب بريدك الإلكتروني أولاً لإرسال رابط الاستعادة" });
+      return;
+    }
+    if (!hasFirebase || !auth) {
+      toast.error("استعادة كلمة المرور بالبريد غير متاحة في الوضع المحلي");
+      return;
+    }
+
+    setResetLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, normalizedEmail);
+      toast.success("تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني");
+    } catch (err: any) {
+      if (err?.code === "auth/invalid-email") {
+        setAuthErrors({ email: "صيغة البريد الإلكتروني غير صحيحة" });
+      } else {
+        toast.error("تعذر إرسال رسالة الاستعادة، تأكد من البريد وحاول مرة أخرى");
+      }
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -437,6 +464,14 @@ export default function Profile() {
                       className={`text-left h-12 tracking-widest ${authErrors.password ? 'border-red-500 focus-visible:ring-red-500/20' : ''}`}
                     />
                     {authErrors.password && <p className="text-red-500 text-xs mt-1 font-medium">{authErrors.password}</p>}
+                    <button
+                      type="button"
+                      onClick={handleForgotPassword}
+                      disabled={resetLoading || authLoading}
+                      className="text-xs font-bold text-primary underline-offset-4 hover:underline disabled:opacity-50"
+                    >
+                      {resetLoading ? "جاري إرسال رابط الاستعادة..." : "نسيت كلمة المرور؟ أرسل لي رابطًا على البريد"}
+                    </button>
                   </div>
                 </div>
               )}

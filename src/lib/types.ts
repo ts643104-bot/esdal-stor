@@ -1,3 +1,5 @@
+export type ProductSize = "M" | "L" | "XL" | "XXL" | "XXXL";
+
 export type Product = {
   id: string;
   name: string;
@@ -6,6 +8,8 @@ export type Product = {
   price_egp: number;
   image_url: string;
   images?: string[];
+  size?: ProductSize;
+  sizes?: ProductSize[];
   category: string;
   in_stock: boolean;
   description?: string;
@@ -29,7 +33,6 @@ export type Order = {
   total: number;
   status: "pending" | "prepared" | "shipped" | "completed" | "cancelled" | "rejected";
   paymentMethod: "cod" | "online";
-  onlinePaymentMode?: "full" | "partial";
   senderPhone?: string;
   customerPhone?: string;
   customerName?: string;
@@ -44,12 +47,13 @@ export type Order = {
   paymentReceiptUrl?: string;
   transferredAmount?: number;
   note?: string;
+  termsAccepted?: boolean;
+  termsAcceptedAt?: string;
 };
 
 export type StoreSettings = {
   discountPercentage: number;
   lowStockThreshold?: number;
-  depositAmount?: number;
   bankAccountNumber?: string;
   whatsappNumbers?: string[]; // Multiple WhatsApp numbers for load balancing
 };
@@ -70,6 +74,8 @@ export type UserProfile = {
   joinedAt?: string;
   loyaltyPoints?: number;
   totalEarnedPoints?: number;
+  termsAccepted?: boolean;
+  termsAcceptedAt?: string;
 };
 
 export type Expense = {

@@ -4,9 +4,9 @@ import { toast } from "sonner";
 
 type CartState = {
   items: CartItem[];
-  add: (p: Product) => void;
-  dec: (productId: string) => void;
-  remove: (productId: string) => void;
+  add: (p: Product, selectedSize?: Product["size"]) => void;
+  dec: (productId: string, selectedSize?: Product["size"]) => void;
+  remove: (productId: string, selectedSize?: Product["size"]) => void;
   clear: () => void;
   totalItems: number;
   totalPrice: number;
@@ -17,10 +17,11 @@ const CartCtx = createContext<CartState | null>(null);
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
 
-  const add = (p: Product) => {
+  const add = (p: Product, selectedSize?: Product["size"]) => {
+    const product = selectedSize ? { ...p, size: selectedSize } : p;
     setItems((prev) => {
-      const idx = prev.findIndex((x) => x.product.id === p.id);
-      const maxStock = p.stock_quantity ?? 10;
+      const idx = prev.findIndex((x) => x.product.id === product.id && x.product.size === product.size);
+      const maxStock = product.stock_quantity ?? 10;
       if (idx >= 0) {
         if (prev[idx].qty >= maxStock) {
           toast.error(`عفواً، الكمية المتاحة في المخزون هي ${maxStock} فقط.`);
@@ -34,24 +35,24 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         toast.error(`عفواً، المنتج نفد من المخزون.`);
         return prev;
       }
-      return [...prev, { product: p, qty: 1 }];
+      return [...prev, { product, qty: 1 }];
     });
   };
 
-  const dec = (productId: string) => {
+  const dec = (productId: string, selectedSize?: Product["size"]) => {
     setItems((prev) => {
-      const idx = prev.findIndex((x) => x.product.id === productId);
+      const idx = prev.findIndex((x) => x.product.id === productId && x.product.size === selectedSize);
       if (idx < 0) return prev;
       const next = [...prev];
       const cur = next[idx];
-      if (cur.qty <= 1) return next.filter((x) => x.product.id !== productId);
+      if (cur.qty <= 1) return next.filter((x) => !(x.product.id === productId && x.product.size === selectedSize));
       next[idx] = { ...cur, qty: cur.qty - 1 };
       return next;
     });
   };
 
-  const remove = (productId: string) => {
-    setItems((prev) => prev.filter((x) => x.product.id !== productId));
+  const remove = (productId: string, selectedSize?: Product["size"]) => {
+    setItems((prev) => prev.filter((x) => !(x.product.id === productId && x.product.size === selectedSize)));
   };
 
   const clear = () => setItems([]);
