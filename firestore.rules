@@ -17,18 +17,6 @@ service cloud.firestore {
       return value is number && value >= 0 && value <= 1000000;
     }
 
-    function validItem(item) {
-      return item.keys().hasAll(['product', 'qty'])
-        && item.qty is int
-        && item.qty > 0
-        && item.qty <= 100
-        && item.product is map
-        && item.product.keys().hasAll(['id', 'price_egp'])
-        && item.product.id is string
-        && item.product.price_egp is number
-        && item.product.price_egp >= 0;
-    }
-
     function validOrder() {
       return request.resource.data.keys().hasAll([
         'userId', 'date', 'items', 'total', 'status', 'paymentMethod',
@@ -49,7 +37,6 @@ service cloud.firestore {
       && request.resource.data.governorate.size() > 0
       && request.resource.data.items is list
       && request.resource.data.items.size() > 0
-      && request.resource.data.items.all(item, validItem(item))
       && isMoney(request.resource.data.total);
     }
 
