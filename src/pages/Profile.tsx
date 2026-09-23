@@ -157,13 +157,20 @@ export default function Profile() {
     setResetLoading(true);
     try {
       await sendPasswordResetEmail(auth, normalizedEmail);
-      toast.success("تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني");
+      toast.success("تم إرسال رابط الاستعادة. راجع الوارد ومجلد الرسائل غير المرغوب فيها");
     } catch (err: any) {
-      if (err?.code === "auth/invalid-email") {
-        setAuthErrors({ email: "صيغة البريد الإلكتروني غير صحيحة" });
-      } else {
-        toast.error("تعذر إرسال رسالة الاستعادة، تأكد من البريد وحاول مرة أخرى");
-      }
+      const errorMessages: Record<string, string> = {
+        "auth/invalid-email": "صيغة البريد الإلكتروني غير صحيحة",
+        "auth/user-not-found": "لا يوجد حساب مسجل بهذا البريد الإلكتروني",
+        "auth/operation-not-allowed": "إرسال رسائل الاستعادة غير مفعل في إعدادات Firebase",
+        "auth/unauthorized-continue-uri": "نطاق الموقع غير مصرح به في إعدادات Firebase",
+        "auth/too-many-requests": "تم تجاوز عدد المحاولات، انتظر قليلًا ثم حاول مرة أخرى"
+      };
+      const message = errorMessages[err?.code] || "تعذر إرسال الرسالة. تأكد من البريد وإعدادات Firebase ثم حاول مرة أخرى";
+      if (err?.code === "auth/invalid-email") setAuthErrors({ email: message });
+      else setAuthErrors({ general: message });
+      toast.error(message);
+      console.error("Password reset email failed:", err?.code || err);
     } finally {
       setResetLoading(false);
     }
