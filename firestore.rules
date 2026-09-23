@@ -45,6 +45,11 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     match /orders/{orderId} {
       allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
       allow create: if isSignedIn() && validOrder();
