@@ -303,8 +303,13 @@ export default function CartSheet() {
 
       setTimeout(() => { window.open(waUrl, "_blank"); }, 600);
       cart.clear();
-    }).catch(() => {
-      toast.error("تعذر تسجيل الطلب حاليًا، حاول مرة أخرى");
+    }).catch((error: any) => {
+      const code = error?.code || "unknown";
+      const message = code === "permission-denied"
+        ? "تم رفض حفظ الطلب من قاعدة البيانات. سيتم إصلاح إعدادات الأمان ثم أعد المحاولة."
+        : "تعذر تسجيل الطلب حاليًا، حاول مرة أخرى";
+      console.error("Order submission failed:", error);
+      toast.error(message);
     }).finally(() => setIsSubmitting(false));
   };
 
