@@ -116,7 +116,10 @@ export const db = {
         note: safeNote,
         termsAccepted,
         termsAcceptedAt: termsAcceptedAt || (termsAccepted ? new Date().toISOString() : undefined)
-      };;
+      };
+    const orderToSave = Object.fromEntries(
+      Object.entries(newOrder).filter(([, value]) => value !== undefined)
+    ) as Order;
     if (hasFirebase && dbFirestore) {
       // High security: orders must be tied to an authenticated user (anonymous auth is OK)
       if (!userId) {
@@ -129,10 +132,10 @@ export const db = {
           throw new Error("رصيد النقاط غير كافٍ لإتمام عملية الخصم");
         }
       }
-      await setDoc(doc(dbFirestore, "orders", newOrder.id), newOrder);
+      await setDoc(doc(dbFirestore, "orders", orderToSave.id), orderToSave);
     } else {
       const orders = await db.getOrders();
-      orders.unshift(newOrder);
+      orders.unshift(orderToSave);
       localStorage.setItem("esdal_orders_v2", JSON.stringify(orders));
     }
 
