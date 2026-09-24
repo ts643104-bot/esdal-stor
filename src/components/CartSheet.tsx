@@ -327,9 +327,9 @@ export default function CartSheet() {
       return;
     }
 
+    
     const apiUrl = import.meta.env.VITE_IMGBB_API_URL || "https://api.imgbb.com/1/upload";
-    const apiKey = import.meta.env.VITE_IMGBB_API_KEY;
-
+    const apiKey = import.meta.env.VITE_IMGBB_API_KEY || "c517290f9573727f0188b26c07b3ecbf";
     if (!apiKey) {
       toast.error("عذراً، خدمة رفع الصور غير متوفرة حالياً");
       return;
