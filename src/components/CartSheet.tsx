@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { ShoppingCart, Trash2, MessageCircle, ShieldCheck, Copy, Plus, Minus, CheckCircle, CalendarIcon, User, Image as ImageIcon } from "lucide-react";
+import { ShoppingCart, Trash2, MessageCircle, Copy, Plus, Minus, CheckCircle, CalendarIcon, User } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { MapPicker } from "@/components/MapPicker";
 import { useCart } from "@/contexts/CartContext";
@@ -19,7 +19,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { toast } from "sonner";
 import { EGYPT_GOVERNORATES } from "@/lib/constants";
-import { hasFirebase, storage } from "@/lib/firebase";
 import { getActiveWhatsappNumber } from "@/lib/utils";
 import { cleanUserText, isValidEgyptianPhone, normalizeEgyptianPhone } from "@/lib/validation";
 
@@ -120,7 +119,6 @@ export default function CartSheet() {
   const [orderNote, setOrderNote] = useState("");
   const [promoCode, setPromoCode] = useState("");
   const [appliedPromo, setAppliedPromo] = useState<{code: string; discount: number} | null>(null);
-  const [promoError, setPromoError] = useState("");
   const [receiptUrl, setReceiptUrl] = useState("");
   const [transferredAmount, setTransferredAmount] = useState<number | "">("");
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
@@ -452,8 +450,8 @@ export default function CartSheet() {
                   <div className="space-y-4">
                     {cart.items.map((it) => (
                       <div key={it.product.id} className="flex items-start gap-4 p-2 rounded-xl bg-muted/20 border border-border/30">
-                        {it.product.image_url ? (
-                          <img src={it.product.image_url} alt={it.product.name} className="h-20 w-20 rounded-lg object-cover border-none" />
+                        {(it.product.images?.[0] || it.product.image_url) ? (
+                          <img src={it.product.images?.[0] || it.product.image_url} alt={it.product.name} className="h-20 w-20 rounded-lg object-cover border-none" />
                         ) : (
                           <div className="h-20 w-20 bg-muted/40 rounded-lg flex items-center justify-center border border-dashed border-border/60">
                             <span className="text-[10px] font-black text-primary/40">لا توجد صورة</span>
@@ -576,6 +574,39 @@ export default function CartSheet() {
                           <Label htmlFor="customerAddress" className="text-xs font-bold opacity-70">العنوان أو رابط الموقع</Label>
                           <Input id="customerAddress" value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} className="rounded-xl h-11" />
                           <MapPicker onLocationSelect={handleMapLocation} />
+                        </div>
+                        <div className="space-y-3 rounded-xl border border-border/60 p-3">
+                          <Label className="text-xs font-bold opacity-70">تفاصيل التوصيل</Label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Button type="button" variant={shippingType === "standard" ? "default" : "outline"} onClick={() => setShippingType("standard")} className="h-10 text-xs">
+                              شحن عادي
+                            </Button>
+                            <Button type="button" variant={shippingType === "express" ? "default" : "outline"} onClick={() => setShippingType("express")} className="h-10 text-xs">
+                              شحن سريع (+30 ج.م)
+                            </Button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <Button type="button" variant="outline" className="h-10 justify-start gap-2 px-2 text-xs">
+                                  <CalendarIcon className="h-4 w-4" />
+                                  {preferredDate ? preferredDate.toLocaleDateString(lang === "ar" ? "ar-EG" : "en-US") : "اختر يومًا"}
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent align="start" className="w-auto p-0" dir="rtl">
+                                <Calendar mode="single" selected={preferredDate} onSelect={setPreferredDate} disabled={{ before: new Date(new Date().setHours(0, 0, 0, 0)) }} />
+                              </PopoverContent>
+                            </Popover>
+                            <Select value={preferredTime} onValueChange={setPreferredTime} dir="rtl">
+                              <SelectTrigger className="h-10 text-xs"><SelectValue placeholder="وقت التوصيل" /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="أي وقت">أي وقت</SelectItem>
+                                <SelectItem value="صباحًا (9 ص - 12 م)">صباحًا (9 ص - 12 م)</SelectItem>
+                                <SelectItem value="ظهرًا (12 م - 4 م)">ظهرًا (12 م - 4 م)</SelectItem>
+                                <SelectItem value="مساءً (4 م - 9 م)">مساءً (4 م - 9 م)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="orderNote" className="text-xs font-bold opacity-70">ملاحظات الطلب</Label>
