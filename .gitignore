@@ -26,3 +26,5 @@ README-*.txt
 *.njsproj
 *.sln
 *.sw?
+.vercel
+.env*

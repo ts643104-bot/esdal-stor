@@ -45,6 +45,7 @@ import { toast } from "sonner";
 import { Link } from "wouter";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { cleanUserText, isValidEgyptianPhone, normalizeEgyptianPhone } from "@/lib/validation";
+import { uploadImage } from "@/lib/image-upload";
 
 // Lazy-load Recharts to keep initial bundle light
 const SalesOverviewChart = lazy(() => import("@/components/admin/SalesOverviewChart"));
@@ -559,89 +560,47 @@ export default function Admin() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 3 * 1024 * 1024) {
-      toast.error("الصورة كبيرة جداً. يرجى اختيار صورة أقل من 3MB");
-      return;
-    }
-    if (!file.type.startsWith("image/")) {
-      toast.error("يجب اختيار ملف صورة صالح");
-      return;
-    }
-
-    const apiUrl = import.meta.env.VITE_IMGBB_API_URL;
-
-    if (!apiUrl || !import.meta.env.VITE_IMGBB_API_KEY) {
-      toast.error("إعدادات ImgBB غير مكتملة في ملف .env");
-      return;
-    }
-
     setUploadingImage(true);
-    const toastId = toast.loading("جاري رفع الصورة إلى ImgBB...");
+    const toastId = toast.loading(lang === "ar" ? "جاري رفع صورة المنتج..." : "Uploading product image...");
     try {
       const compressedFile = await compressImage(file);
-      const formData = new FormData();
-      formData.append("image", compressedFile, "image.jpg");
-
-      const response = await fetch(`${apiUrl}?key=${import.meta.env.VITE_IMGBB_API_KEY}`, {
-        method: "POST",
-        body: formData
-      });
-
-      const data = await response.json();
-      const uploadedUrl = safeExternalUrl(data.data?.url);
-      if (!response.ok || !data.success || !uploadedUrl) {
-        throw new Error(data.error?.message || "فشل الرفع");
-      }
+      const uploadedUrl = safeExternalUrl(await uploadImage(compressedFile, "product.jpg"));
+      if (!uploadedUrl) throw new Error("The image service returned an invalid URL");
       setNewProduct((prev) => ({ ...prev, image_url: uploadedUrl }));
-      toast.success("تم رفع الصورة بنجاح", { id: toastId });
-    } catch (err: any) {
-      toast.error("فشل رفع الصورة: " + err.message, { id: toastId });
+      toast.success(lang === "ar" ? "تم رفع صورة المنتج" : "Product image uploaded", { id: toastId });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : lang === "ar" ? "فشل رفع الصورة" : "Image upload failed";
+      toast.error(message, { id: toastId });
     } finally {
       setUploadingImage(false);
     }
   }, []);
-
   const handleGalleryUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    if (!files.length) return;
-
-    const validFiles = files.filter((f) => f.size <= 3 * 1024 * 1024 && f.type.startsWith("image/"));
+    const validFiles = files.filter((file) => file.size <= 3 * 1024 * 1024 && file.type.startsWith("image/"));
     if (!validFiles.length) {
-      toast.error("لم يتم اختيار صور صالحة (الحد الأقصى 3MB للصورة)");
-      return;
-    }
-
-    const apiUrl = import.meta.env.VITE_IMGBB_API_URL;
-    const apiKey = import.meta.env.VITE_IMGBB_API_KEY;
-
-    if (!apiUrl || !apiKey) {
-      toast.error("إعدادات ImgBB غير مكتملة");
+      toast.error(lang === "ar" ? "اختر صورًا صالحة بحجم لا يتجاوز 3 ميجابايت للصورة" : "Select images no larger than 3 MB.");
       return;
     }
 
     setUploadingImage(true);
-    const toastId = toast.loading(`جاري رفع ${validFiles.length} صورة...`);
-    const uploadImage = async (file: File, filename: string) => {
-      const compressedFile = await compressImage(file);
-      const formData = new FormData();
-      formData.append("image", compressedFile, filename);
-      const response = await fetch(`${apiUrl}?key=${apiKey}`, { method: "POST", body: formData });
-      const data = await response.json();
-      if (!response.ok || !data.success || typeof data.data?.url !== "string") throw new Error(data.error?.message || "فشل الرفع");
-      return safeExternalUrl(data.data.url);
-    };
-
+    const toastId = toast.loading(lang === "ar" ? `جاري رفع ${validFiles.length} صورة...` : `Uploading ${validFiles.length} image(s)...`);
     try {
-      const urls = (await Promise.all(validFiles.map((file, index) => uploadImage(file, `gallery-${index}.jpg`)))).filter(Boolean);
-      setNewProduct((prev) => ({ ...prev, images: [...(prev.images || []), ...urls] }));
-      toast.success("تم تحديث معرض الصور بنجاح", { id: toastId });
-    } catch (err: any) {
-      toast.error("فشل الرفع: " + err.message, { id: toastId });
+      const uploadedUrls = await Promise.all(validFiles.map(async (file, index) => {
+        const compressedFile = await compressImage(file);
+        return safeExternalUrl(await uploadImage(compressedFile, `gallery-${index}.jpg`));
+      }));
+      const imageUrls = uploadedUrls.filter((url): url is string => Boolean(url));
+      if (!imageUrls.length) throw new Error(lang === "ar" ? "لم يتم رفع أي صور" : "No images were uploaded");
+      setNewProduct((prev) => ({ ...prev, images: [...(prev.images || []), ...imageUrls] }));
+      toast.success(lang === "ar" ? "تم رفع صور المعرض" : "Gallery images uploaded", { id: toastId });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : lang === "ar" ? "فشل رفع الصور" : "Image upload failed";
+      toast.error(message, { id: toastId });
     } finally {
       setUploadingImage(false);
     }
   }, []);
-
   const saveProduct = useCallback(async () => {
     const name = (newProduct.name || "").trim();
     const price = Number(newProduct.price_egp);

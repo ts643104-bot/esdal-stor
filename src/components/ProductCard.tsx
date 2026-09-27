@@ -29,7 +29,7 @@ const ProductCard = memo(function ProductCard({ product }: { product: Product })
       viewport={{ once: true, margin: "-50px" }}
       transition={{ duration: 0.4 }}
     >
-      <Card className="group h-full overflow-hidden rounded-2xl border border-border/70 bg-card/95 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:border-primary/30 sm:rounded-[22px]">
+      <Card className="group h-full overflow-hidden rounded-2xl border border-border/70 bg-card/95 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-primary/30 hover:shadow-xl sm:rounded-[22px]">
         <div className="relative">
           <Dialog open={isDetailsOpen} onOpenChange={setIsDetailsOpen}>
             <div className="relative">

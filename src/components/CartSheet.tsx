@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { EGYPT_GOVERNORATES } from "@/lib/constants";
 import { getActiveWhatsappNumber } from "@/lib/utils";
 import { cleanUserText, isValidEgyptianPhone, normalizeEgyptianPhone } from "@/lib/validation";
+import { uploadImage } from "@/lib/image-upload";
 
 const VODAFONE_CASH_NUMBER = "01140971703";
 
@@ -320,44 +321,19 @@ export default function CartSheet() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      toast.error("يجب اختيار ملف صورة صالح");
-      return;
-    }
-
-    
-    const apiUrl = import.meta.env.VITE_IMGBB_API_URL || "https://api.imgbb.com/1/upload";
-    const apiKey = import.meta.env.VITE_IMGBB_API_KEY || "c517290f9573727f0188b26c07b3ecbf";
-    if (!apiKey) {
-      toast.error("عذراً، خدمة رفع الصور غير متوفرة حالياً");
-      return;
-    }
-
     setUploadingReceipt(true);
-    const toastId = toast.loading("جاري رفع صورة الإيصال...");
+    const toastId = toast.loading(lang === "ar" ? "جاري رفع صورة الإيصال..." : "Uploading payment receipt...");
     try {
-      const formData = new FormData();
-      formData.append("image", file);
-
-      const response = await fetch(`${apiUrl}?key=${apiKey}`, {
-        method: "POST",
-        body: formData
-      });
-
-      const data = await response.json();
-      if (data.success) {
-        setReceiptUrl(data.data.url);
-        toast.success("تم إرفاق صورة الإيصال بنجاح", { id: toastId });
-      } else {
-        throw new Error(data.error?.message || "فشل الرفع");
-      }
-    } catch (err: any) {
-      toast.error("فشل رفع الصورة: " + err.message, { id: toastId });
+      const uploadedUrl = await uploadImage(file, "payment-receipt.jpg");
+      setReceiptUrl(uploadedUrl);
+      toast.success(lang === "ar" ? "تم رفع صورة الإيصال بنجاح" : "Receipt uploaded successfully", { id: toastId });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : lang === "ar" ? "فشل رفع الصورة" : "Image upload failed";
+      toast.error(message, { id: toastId });
     } finally {
       setUploadingReceipt(false);
     }
   };
-
   const handleMapLocation = (link: string, detectedGov?: string) => {
     setCustomerAddress(prev => prev + (prev.trim() ? "\n\nرابط الموقع: " : "رابط الموقع: ") + link);
     if (detectedGov) {
