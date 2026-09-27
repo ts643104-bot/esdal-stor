@@ -2,7 +2,23 @@ import type { Product, CartItem, Order, Expense, StoreSettings, UserProfile, Pro
 import { nanoid } from "nanoid";
 import { isValidOrderQuantity, cleanUserText } from "./validation";
 import { dbFirestore, hasFirebase } from "./firebase";
-import { collection, doc, getDocs, getDoc, setDoc, deleteDoc, updateDoc, query, orderBy, where, runTransaction, onSnapshot } from "firebase/firestore";
+import { collection, doc, getDocs, getDoc, setDoc, deleteDoc, updateDoc, query, orderBy, where, runTransaction, onSnapshot, writeBatch } from "firebase/firestore";
+
+// Firestore rejects undefined values, including values nested inside order items.
+// Normalize writes in one place so optional product fields cannot break a save.
+const withoutUndefined = <T,>(value: T): T => {
+  if (Array.isArray(value)) {
+    return value.filter((item) => item !== undefined).map((item) => withoutUndefined(item)) as T;
+  }
+  if (value && typeof value === "object" && !(value instanceof Date)) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, child]) => child !== undefined)
+        .map(([key, child]) => [key, withoutUndefined(child)]),
+    ) as T;
+  }
+  return value;
+};
 
 const getLocalProducts = (): Product[] => {
   const stored = localStorage.getItem("esdal_products_v2");
@@ -65,7 +81,7 @@ export const db = {
   },
   saveProduct: async (product: Product) => {
     if (hasFirebase && dbFirestore) {
-      await setDoc(doc(dbFirestore, "products", product.id), product);
+      await setDoc(doc(dbFirestore, "products", product.id), withoutUndefined(product));
     } else {
       const products = getLocalProducts();
       localStorage.setItem(
@@ -77,9 +93,15 @@ export const db = {
   },
   saveProducts: async (products: Product[]) => {
     if (hasFirebase && dbFirestore) {
-      for (const p of products) {
-        if (!p.id) p.id = Math.random().toString(36).substring(2, 9).toUpperCase();
-        await setDoc(doc(dbFirestore, "products", p.id), p);
+      // Firestore batches are limited to 500 writes. Chunk below that and avoid
+      // one network round-trip per product when an admin edits a category.
+      for (let offset = 0; offset < products.length; offset += 450) {
+        const batch = writeBatch(dbFirestore);
+        for (const product of products.slice(offset, offset + 450)) {
+          const id = product.id || nanoid(8).toUpperCase();
+          batch.set(doc(dbFirestore, "products", id), withoutUndefined({ ...product, id }));
+        }
+        await batch.commit();
       }
     } else {
       localStorage.setItem("esdal_products_v2", JSON.stringify(products));
@@ -172,9 +194,7 @@ export const db = {
       termsAcceptedAt: termsAcceptedAt || (termsAccepted ? new Date().toISOString() : undefined),
       termsAcceptedEmail: termsAcceptedEmail?.trim().toLowerCase() || undefined,
     };
-    const orderToSave = Object.fromEntries(
-      Object.entries(newOrder).filter(([, value]) => value !== undefined)
-    ) as Order;
+    const orderToSave = withoutUndefined(newOrder);
     if (hasFirebase && dbFirestore) {
       const orderRef = doc(dbFirestore, "orders", orderToSave.id);
       const profileRef = doc(dbFirestore, "users", userId);
@@ -211,7 +231,7 @@ export const db = {
         };
         transaction.set(
           profileRef,
-          Object.fromEntries(Object.entries(updatedProfile).filter(([, value]) => value !== undefined)),
+          withoutUndefined(updatedProfile),
           { merge: true },
         );
       });
@@ -375,9 +395,13 @@ export const db = {
   },
   saveExpenses: async (expenses: Expense[]) => {
     if (hasFirebase && dbFirestore) {
-      for (const e of expenses) {
-        if (!e.id) e.id = Math.random().toString(36).substring(2, 9).toUpperCase();
-        await setDoc(doc(dbFirestore, "expenses", e.id), e);
+      for (let offset = 0; offset < expenses.length; offset += 450) {
+        const batch = writeBatch(dbFirestore);
+        for (const expense of expenses.slice(offset, offset + 450)) {
+          const id = expense.id || nanoid(8).toUpperCase();
+          batch.set(doc(dbFirestore, "expenses", id), withoutUndefined({ ...expense, id }));
+        }
+        await batch.commit();
       }
     } else {
       localStorage.setItem("esdal_expenses_v2", JSON.stringify(expenses));
@@ -407,7 +431,7 @@ export const db = {
   saveSettings: async (settings: StoreSettings) => {
     try {
       if (hasFirebase && dbFirestore) {
-        await setDoc(doc(dbFirestore, "settings", "store"), settings);
+        await setDoc(doc(dbFirestore, "settings", "store"), withoutUndefined(settings));
       }
     } catch (e) {
       console.warn("Failed to save store settings to Firebase", e);
@@ -425,7 +449,7 @@ export const db = {
   },
   saveUserProfile: async (profile: UserProfile) => {
     if (hasFirebase && dbFirestore) {
-      await setDoc(doc(dbFirestore, "users", profile.id), profile, { merge: true });
+      await setDoc(doc(dbFirestore, "users", profile.id), withoutUndefined(profile), { merge: true });
     } else {
       const stored = localStorage.getItem("esdal_users_v2");
       const users: UserProfile[] = stored ? JSON.parse(stored) : [];
@@ -464,9 +488,13 @@ export const db = {
   },
   savePromoCodes: async (codes: PromoCode[]) => {
     if (hasFirebase && dbFirestore) {
-      for (const code of codes) {
-        if (!code.id) code.id = Math.random().toString(36).substring(2, 9).toUpperCase();
-        await setDoc(doc(dbFirestore, "promoCodes", code.id), code);
+      for (let offset = 0; offset < codes.length; offset += 450) {
+        const batch = writeBatch(dbFirestore);
+        for (const code of codes.slice(offset, offset + 450)) {
+          const id = code.id || nanoid(8).toUpperCase();
+          batch.set(doc(dbFirestore, "promoCodes", id), withoutUndefined({ ...code, id }));
+        }
+        await batch.commit();
       }
     } else {
       localStorage.setItem("esdal_promos_v2", JSON.stringify(codes));
@@ -502,9 +530,13 @@ export const db = {
   },
   saveCategories: async (categories: Category[]) => {
     if (hasFirebase && dbFirestore) {
-      for (const cat of categories) {
-        if (!cat.id) cat.id = nanoid(6);
-        await setDoc(doc(dbFirestore, "categories", cat.id), cat);
+      for (let offset = 0; offset < categories.length; offset += 450) {
+        const batch = writeBatch(dbFirestore);
+        for (const category of categories.slice(offset, offset + 450)) {
+          const id = category.id || nanoid(6);
+          batch.set(doc(dbFirestore, "categories", id), withoutUndefined({ ...category, id }));
+        }
+        await batch.commit();
       }
     } else {
       localStorage.setItem("esdal_categories_v2", JSON.stringify(categories));

@@ -21,7 +21,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     const product = selectedSize ? { ...p, size: selectedSize } : p;
     setItems((prev) => {
       const idx = prev.findIndex((x) => x.product.id === product.id && x.product.size === product.size);
-      const maxStock = product.stock_quantity ?? 10;
+      const maxStock = product.stock_quantity ?? (product.in_stock === false ? 0 : 10);
       if (idx >= 0) {
         if (prev[idx].qty >= maxStock) {
           toast.error(`عفواً، الكمية المتاحة في المخزون هي ${maxStock} فقط.`);

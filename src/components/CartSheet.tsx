@@ -445,7 +445,7 @@ export default function CartSheet() {
                 <div className="space-y-6 pb-6">
                   <div className="space-y-4">
                     {cart.items.map((it) => (
-                      <div key={it.product.id} className="flex items-start gap-4 p-2 rounded-xl bg-muted/20 border border-border/30">
+                      <div key={`${it.product.id}-${it.product.size || "default"}`} className="flex items-start gap-4 p-2 rounded-xl bg-muted/20 border border-border/30">
                         {(it.product.images?.[0] || it.product.image_url) ? (
                           <img src={it.product.images?.[0] || it.product.image_url} alt={it.product.name} className="h-20 w-20 rounded-lg object-cover border-none" />
                         ) : (
@@ -461,9 +461,9 @@ export default function CartSheet() {
                           </div>
                           <div className="flex items-center justify-between mt-1">
                             <div className="flex items-center gap-2 bg-background/50 rounded-lg p-0.5 border border-border/60">
-                              <Button size="icon" variant="ghost" onClick={() => cart.dec(it.product.id, it.product.size)} className="h-8 w-8 text-muted-foreground"><Minus className="h-4 w-4" /></Button>
+                              <Button size="icon" variant="ghost" aria-label={`تقليل كمية ${it.product.name}`} onClick={() => cart.dec(it.product.id, it.product.size)} className="h-9 w-9 text-muted-foreground"><Minus className="h-4 w-4" /></Button>
                               <span className="text-sm font-bold min-w-6 text-center">{it.qty}</span>
-                              <Button size="icon" variant="ghost" onClick={() => cart.add(it.product, it.product.size)} className="h-8 w-8 text-primary"><Plus className="h-4 w-4" /></Button>
+                              <Button size="icon" variant="ghost" aria-label={`زيادة كمية ${it.product.name}`} disabled={it.qty >= (it.product.stock_quantity ?? (it.product.in_stock === false ? 0 : 10))} onClick={() => cart.add(it.product, it.product.size)} className="h-9 w-9 text-primary"><Plus className="h-4 w-4" /></Button>
                             </div>
                             <Button size="icon" variant="ghost" onClick={() => cart.remove(it.product.id, it.product.size)} className="h-9 w-9 text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
                           </div>

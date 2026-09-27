@@ -51,30 +51,53 @@ import { uploadImage } from "@/lib/image-upload";
 const SalesOverviewChart = lazy(() => import("@/components/admin/SalesOverviewChart"));
 
 const ADMIN_EMAIL = (import.meta as any).env?.VITE_ADMIN_EMAIL?.toString()?.trim()?.toLowerCase() || "admin@hala-alyusr.com";
+const MAX_SOURCE_IMAGE_BYTES = 12 * 1024 * 1024;
 
-// Image compression helper to drastically reduce image sizes
+// Resize large phone photos before sending them through the upload API.
 const compressImage = async (file: File): Promise<Blob> => {
-  return new Promise((resolve) => {
+  if (!file.type.startsWith("image/")) throw new Error("اختر ملف صورة صالحًا.");
+  if (file.size > MAX_SOURCE_IMAGE_BYTES) throw new Error("يجب ألا يتجاوز حجم الصورة 12 ميجابايت.");
+
+  return new Promise((resolve, reject) => {
     const img = new Image();
-    img.src = URL.createObjectURL(file);
+    const objectUrl = URL.createObjectURL(file);
+    const releaseObjectUrl = () => URL.revokeObjectURL(objectUrl);
+    img.src = objectUrl;
     img.onload = () => {
-      const canvas = document.createElement("canvas");
-      let { width, height } = img;
-      const MAX_SIZE = 800; // Limit dimensions to 800px
-      if (width > height && width > MAX_SIZE) {
-        height = Math.round(height * (MAX_SIZE / width));
-        width = MAX_SIZE;
-      } else if (height > MAX_SIZE) {
-        width = Math.round(width * (MAX_SIZE / height));
-        height = MAX_SIZE;
+      try {
+        const canvas = document.createElement("canvas");
+        let { width, height } = img;
+        const MAX_SIZE = 1000;
+        if (width > height && width > MAX_SIZE) {
+          height = Math.round(height * (MAX_SIZE / width));
+          width = MAX_SIZE;
+        } else if (height > MAX_SIZE) {
+          width = Math.round(width * (MAX_SIZE / height));
+          height = MAX_SIZE;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          releaseObjectUrl();
+          reject(new Error("تعذر تجهيز الصورة. اختر صورة أخرى وحاول مجددًا."));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob((blob) => {
+          releaseObjectUrl();
+          if (blob) resolve(blob);
+          else reject(new Error("تعذر ضغط الصورة. اختر صورة أخرى وحاول مجددًا."));
+        }, "image/jpeg", 0.78);
+      } catch {
+        releaseObjectUrl();
+        reject(new Error("تعذر تجهيز الصورة. اختر صورة أخرى وحاول مجددًا."));
       }
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext("2d");
-      ctx?.drawImage(img, 0, 0, width, height);
-      canvas.toBlob((blob) => resolve(blob || file), "image/jpeg", 0.7); // Compress as JPEG at 70% quality
     };
-    img.onerror = () => resolve(file);
+    img.onerror = () => {
+      releaseObjectUrl();
+      reject(new Error("تعذرت قراءة الصورة. تحقق من نوع الملف وحاول مجددًا."));
+    };
   });
 };
 
@@ -577,23 +600,28 @@ export default function Admin() {
       toast.error(message, { id: toastId });
     } finally {
       setUploadingImage(false);
+      e.target.value = "";
     }
-  }, []);
+  }, [lang]);
   const handleGalleryUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    const validFiles = files.filter((file) => file.size <= 3 * 1024 * 1024 && file.type.startsWith("image/"));
+    const validFiles = files.filter((file) => file.size <= MAX_SOURCE_IMAGE_BYTES && file.type.startsWith("image/"));
     if (!validFiles.length) {
-      toast.error(lang === "ar" ? "اختر صورًا صالحة بحجم لا يتجاوز 3 ميجابايت للصورة" : "Select images no larger than 3 MB.");
+      toast.error(lang === "ar" ? "اختر صورًا صالحة بحجم لا يتجاوز 12 ميجابايت للصورة" : "Select images no larger than 12 MB.");
       return;
     }
 
     setUploadingImage(true);
     const toastId = toast.loading(lang === "ar" ? `جاري رفع ${validFiles.length} صورة...` : `Uploading ${validFiles.length} image(s)...`);
     try {
-      const uploadedUrls = await Promise.all(validFiles.map(async (file, index) => {
-        const compressedFile = await compressImage(file);
-        return safeExternalUrl(await uploadImage(compressedFile, `gallery-${index}.jpg`));
-      }));
+      const uploadedUrls: (string | null)[] = [];
+      for (let offset = 0; offset < validFiles.length; offset += 3) {
+        const batch = await Promise.all(validFiles.slice(offset, offset + 3).map(async (file, index) => {
+          const compressedFile = await compressImage(file);
+          return safeExternalUrl(await uploadImage(compressedFile, `gallery-${offset + index}.jpg`));
+        }));
+        uploadedUrls.push(...batch);
+      }
       const imageUrls = uploadedUrls.filter((url): url is string => Boolean(url));
       if (!imageUrls.length) throw new Error(lang === "ar" ? "لم يتم رفع أي صور" : "No images were uploaded");
       setNewProduct((prev) => ({ ...prev, images: [...(prev.images || []), ...imageUrls] }));
@@ -603,8 +631,9 @@ export default function Admin() {
       toast.error(message, { id: toastId });
     } finally {
       setUploadingImage(false);
+      e.target.value = "";
     }
-  }, []);
+  }, [lang]);
   const saveProduct = useCallback(async () => {
     if (savingProduct || uploadingImage) return;
     const name = (newProduct.name || "").trim();
@@ -651,7 +680,17 @@ export default function Admin() {
       setNewProduct({ name: "", cost_price_egp: 0, profit_egp: 0, price_egp: 0, category: "", description: "", size: undefined, sizes: ["M", "L", "XL", "XXL", "XXXL"], in_stock: true, image_url: "", stock_quantity: 10 });
     } catch (error) {
       console.error("Failed to save product:", error);
-      toast.error("تعذر حفظ المنتج. تحقق من الاتصال والصلاحيات ثم أعد المحاولة.");
+      const code = typeof error === "object" && error !== null && "code" in error
+        ? String((error as { code?: unknown }).code)
+        : "";
+      const message = code.includes("permission-denied") || code.includes("unauthenticated")
+        ? "حسابك لا يملك صلاحية إدارة المنتجات. سجّل الدخول بحساب الإدارة ثم أعد المحاولة."
+        : code.includes("invalid-argument")
+          ? "بيانات المنتج غير مكتملة أو غير صالحة. راجع السعر والمخزون والصورة."
+          : code.includes("unavailable") || code.includes("network")
+            ? "تعذر الاتصال بالخدمة. تحقق من الإنترنت ثم أعد المحاولة."
+            : "تعذر حفظ المنتج. حاول مرة أخرى، وإذا استمرت المشكلة تواصل مع الدعم.";
+      toast.error(message);
     } finally {
       setSavingProduct(false);
     }
