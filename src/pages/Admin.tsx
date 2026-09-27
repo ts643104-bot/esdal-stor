@@ -117,6 +117,7 @@ export default function Admin() {
   const [whatsappInput, setWhatsappInput] = useState("");
 
   const [savingSettings, setSavingSettings] = useState(false);
+  const [savingProduct, setSavingProduct] = useState(false);
   const [customerLoggedIn, setCustomerLoggedIn] = useState<string | null>(null);
   const [ordersPage, setOrdersPage] = useState(1);
   const ordersPerPage = 20;
@@ -195,8 +196,12 @@ export default function Admin() {
   }, []);
 
   useEffect(() => {
-    refreshAll();
-  }, [refreshAll]);
+    if (!isAuthenticated) return;
+    void refreshAll().catch((error) => {
+      console.error("Failed to load admin data:", error);
+      toast.error("تعذر تحميل بيانات لوحة الإدارة. أعد تسجيل الدخول وحاول مرة أخرى.");
+    });
+  }, [isAuthenticated, refreshAll]);
 
   // Real-time listener for new orders and notification sound
   useEffect(() => {
@@ -509,12 +514,11 @@ export default function Admin() {
     async (p: Product, amount: number) => {
       const newStock = Math.max(0, (p.stock_quantity ?? 10) + amount);
       const updatedProduct = { ...p, stock_quantity: newStock, in_stock: newStock > 0 };
-      const updatedList = products.map((item) => (item.id === p.id ? updatedProduct : item));
-      await db.saveProducts(updatedList);
-      setProducts(updatedList);
+      await db.saveProduct(updatedProduct);
+      setProducts((current) => current.map((item) => (item.id === p.id ? updatedProduct : item)));
       toast.success(`تم تحديث مخزون ${p.name} إلى ${newStock}`);
     },
-    [products]
+    []
   );
 
   const handleAddWhatsapp = useCallback(() => {
@@ -602,6 +606,7 @@ export default function Admin() {
     }
   }, []);
   const saveProduct = useCallback(async () => {
+    if (savingProduct || uploadingImage) return;
     const name = (newProduct.name || "").trim();
     const price = Number(newProduct.price_egp);
     const imageUrl = safeExternalUrl(newProduct.image_url || "");
@@ -635,20 +640,22 @@ export default function Admin() {
       stock_quantity: stock,
     };
 
-    let updatedList: Product[];
-    if (newProduct.id) {
-      updatedList = products.map((p) => (p.id === product.id ? product : p));
-      toast.success("تم تحديث المنتج");
-    } else {
-      updatedList = [product, ...products];
-      toast.success("تمت إضافة المنتج");
+    setSavingProduct(true);
+    try {
+      await db.saveProduct(product);
+      setProducts((current) => newProduct.id
+        ? current.map((existing) => existing.id === product.id ? product : existing)
+        : [product, ...current.filter((existing) => existing.id !== product.id)]);
+      toast.success(newProduct.id ? "تم تحديث المنتج" : "تمت إضافة المنتج" );
+      setIsAddOpen(false);
+      setNewProduct({ name: "", cost_price_egp: 0, profit_egp: 0, price_egp: 0, category: "", description: "", size: undefined, sizes: ["M", "L", "XL", "XXL", "XXXL"], in_stock: true, image_url: "", stock_quantity: 10 });
+    } catch (error) {
+      console.error("Failed to save product:", error);
+      toast.error("تعذر حفظ المنتج. تحقق من الاتصال والصلاحيات ثم أعد المحاولة.");
+    } finally {
+      setSavingProduct(false);
     }
-
-    await db.saveProducts(updatedList);
-    setProducts(updatedList);
-    setIsAddOpen(false);
-    setNewProduct({ name: "", cost_price_egp: 0, profit_egp: 0, price_egp: 0, category: "", description: "", size: undefined, sizes: ["M", "L", "XL", "XXL", "XXXL"], in_stock: true, image_url: "", stock_quantity: 10 });
-  }, [newProduct, products]);
+  }, [newProduct, savingProduct, uploadingImage]);
 
   if (!isAuthenticated) {
     return (
@@ -1031,7 +1038,9 @@ export default function Admin() {
                       </div>
                     </div>
 
-                    <Button onClick={saveProduct} className="w-full" disabled={uploadingImage}>حفظ المنتج</Button>
+                    <Button onClick={() => void saveProduct()} className="w-full" disabled={uploadingImage || savingProduct}>
+                      {savingProduct ? "جاري الحفظ..." : "حفظ المنتج"}
+                    </Button>
                   </DialogContent>
                 </Dialog>
               </CardHeader>
@@ -1137,6 +1146,9 @@ export default function Admin() {
                                   <div className="text-xs font-mono mt-1" dir="ltr">
                                     {normalizePhone(o.customerPhone)}
                                   </div>
+                                )}
+                                {o.customerConfirmedAt && (
+                                  <div className="text-xs font-semibold text-green-700 dark:text-green-400 mt-1">العميل أكد استلام الطلب</div>
                                 )}
                                 <div className="text-xs text-muted-foreground mt-1">{new Date(o.date).toLocaleDateString("ar-EG")}</div>
                                 {o.preferredTime && (

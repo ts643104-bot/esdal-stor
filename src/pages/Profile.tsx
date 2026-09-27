@@ -50,23 +50,35 @@ export default function Profile() {
   }, [profile]);
 
   useEffect(() => {
-    if (user) {
-      setLoadingOrders(true);
-      db.getOrdersByUser(user.uid).then(res => {
-        setOrders(res);
-        setLoadingOrders(false);
-      });
+    let active = true;
+    if (!user) {
+      setOrders([]);
+      setLoadingOrders(false);
+      return;
     }
+
+    setLoadingOrders(true);
+    void db.getOrdersByUser(user.uid).then((res) => {
+      if (active) setOrders(res);
+    }).catch((error) => {
+      console.error("Failed to load customer orders:", error);
+      if (active) toast.error("تعذر تحميل سجل الطلبات. حاول تحديث الصفحة.");
+    }).finally(() => {
+      if (active) setLoadingOrders(false);
+    });
+
+    return () => { active = false; };
   }, [user]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
+    const normalizedEmail = email.trim().toLowerCase();
     
     setAuthErrors({});
     let hasErr = false;
     const newErrors: any = {};
     
-    if (!email || !email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
+    if (!normalizedEmail || !normalizedEmail.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
       newErrors.email = lang === "ar" ? "صيغة البريد الإلكتروني غير صحيحة" : "Invalid email format";
       hasErr = true;
     }
@@ -81,7 +93,7 @@ export default function Profile() {
       return;
     }
 
-    if (email.trim().toLowerCase() === ADMIN_EMAIL) {
+    if (normalizedEmail === ADMIN_EMAIL) {
       setAuthErrors({ general: "هذا الحساب مخصص لإدارة الموقع فقط. يرجى الدخول من لوحة التحكم." });
       return;
     }
@@ -90,10 +102,11 @@ export default function Profile() {
     try {
       if (hasFirebase && auth) {
         if (isRegistering) {
-          const cred = await createUserWithEmailAndPassword(auth, email, password);
+          const cred = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
           await db.saveUserProfile({
             id: cred.user.uid,
-            name: name || email.split("@")[0],
+            email: cred.user.email?.toLowerCase() || normalizedEmail,
+            name: name || normalizedEmail.split("@")[0],
             phone: phone || "",
             address: address || "",
             governorate: governorate || "",
@@ -104,17 +117,18 @@ export default function Profile() {
           toast.success(t("auth.success.registered" as any) || "تم إنشاء الحساب بنجاح");
           setShowRegSuccess(true);
         } else {
-          await signInWithEmailAndPassword(auth, email, password);
+          await signInWithEmailAndPassword(auth, normalizedEmail, password);
           toast.success(t("auth.success.logged_in" as any) || "تم تسجيل الدخول بنجاح");
         }
       } else {
         // Local mock auth
-        const uid = "local_" + email.replace(/[^a-zA-Z0-9]/g, "");
-        localStorage.setItem("hala_alyusr_local_user", JSON.stringify({ id: uid, email }));
+        const uid = "local_" + normalizedEmail.replace(/[^a-zA-Z0-9]/g, "");
+        localStorage.setItem("esdal_local_user", JSON.stringify({ id: uid, email: normalizedEmail }));
         if (isRegistering) {
           await db.saveUserProfile({
             id: uid,
-            name: email.split("@")[0],
+            email: normalizedEmail,
+            name: normalizedEmail.split("@")[0],
             phone: "",
             address: "",
             governorate: "",
@@ -157,7 +171,7 @@ export default function Profile() {
     setResetLoading(true);
     try {
       await sendPasswordResetEmail(auth, normalizedEmail);
-      toast.success("تم إرسال رابط الاستعادة. راجع الوارد ومجلد الرسائل غير المرغوب فيها");
+      toast.success(`تم إرسال رابط إعادة ضبط كلمة المرور إلى ${normalizedEmail}. راجع الوارد والرسائل غير المرغوب فيها.`);
     } catch (err: any) {
       const errorMessages: Record<string, string> = {
         "auth/invalid-email": "صيغة البريد الإلكتروني غير صحيحة",
@@ -179,18 +193,9 @@ export default function Profile() {
   const handleConfirmReceipt = async (order: Order) => {
     setConfirmingReceiptId(order.id);
     try {
-      await db.updateOrderStatusAndDeductStock(order.id, order.items);
-      setOrders(orders.map(o => o.id === order.id ? { ...o, status: "completed" } : o));
-      toast.success(t("profile.order.receipt_confirmed" as any) || "تم تأكيد الاستلام بنجاح");
-      
-      // Simulate sending a message to the customer
-      setTimeout(() => {
-        toast("📩 تم إرسال رسالة تأكيد الاستلام إلى بريدك/هاتفك بنجاح!", {
-          duration: 5000,
-          position: "top-center",
-        });
-      }, 1000);
-      
+      const customerConfirmedAt = await db.confirmOrderReceipt(order.id);
+      setOrders((current) => current.map(o => o.id === order.id ? { ...o, customerConfirmedAt } : o));
+      toast.success("تم تسجيل تأكيد الاستلام وإبلاغ المتجر");
     } catch (err) {
       console.error(err);
       toast.error("حدث خطأ أثناء تأكيد الاستلام");
@@ -216,12 +221,17 @@ export default function Profile() {
     try {
       const p: UserProfile = {
         id: user.uid,
+        email: user.email?.toLowerCase() || profile?.email,
         name,
         phone,
         address,
         governorate,
         joinedAt: profile?.joinedAt || new Date().toISOString(),
-        loyaltyPoints: profile?.loyaltyPoints || 0
+        loyaltyPoints: profile?.loyaltyPoints || 0,
+        totalEarnedPoints: profile?.totalEarnedPoints || 0,
+        termsAccepted: profile?.termsAccepted || false,
+        termsAcceptedAt: profile?.termsAcceptedAt,
+        termsAcceptedEmail: profile?.termsAcceptedEmail,
       };
       await db.saveUserProfile(p);
       await refreshProfile();
@@ -700,7 +710,7 @@ export default function Profile() {
                           </p>
                           
                           <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 justify-end">
-                            {(order.status === "shipped" || order.status === "prepared") && (
+                            {order.status === "shipped" && !order.customerConfirmedAt && (
                               <Button 
                                 size="sm" 
                                 className="h-9 px-4 bg-green-600 hover:bg-green-700 text-white gap-2 w-full sm:w-auto shadow-md"
@@ -710,6 +720,10 @@ export default function Profile() {
                                 <CheckCircle className="h-4 w-4" />
                                 تأكيد الاستلام
                               </Button>
+                            )}
+
+                            {order.status === "shipped" && order.customerConfirmedAt && (
+                              <span className="text-xs font-semibold text-green-700 dark:text-green-400">تم تأكيد الاستلام، بانتظار تحديث المتجر</span>
                             )}
                             
                             {order.status === "pending" && (
@@ -721,7 +735,7 @@ export default function Profile() {
                                   if (confirm("هل أنت متأكد من رغبتك في إلغاء هذا الطلب؟")) {
                                     try {
                                       await db.updateOrderStatus(order.id, "cancelled");
-                                      setOrders(orders.map(o => o.id === order.id ? { ...o, status: "cancelled" as const } : o));
+                                      setOrders((current) => current.map(o => o.id === order.id ? { ...o, status: "cancelled" as const } : o));
                                       toast.success("تم إلغاء الطلب");
                                     } catch {
                                       toast.error("فشل إلغاء الطلب");

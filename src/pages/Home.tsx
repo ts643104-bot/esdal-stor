@@ -15,7 +15,6 @@ import { Link } from "wouter";
 import { motion } from "framer-motion";
 import CartSheet from "@/components/CartSheet";
 import TrackOrder from "@/components/TrackOrder";
-import { loadProducts } from "@/lib/products";
 import type { Product } from "@/lib/types";
 
 interface HomeProps {
@@ -42,25 +41,45 @@ export default function Home({ targetSection }: HomeProps) {
     }
   }, [targetSection]);
 
-  const reload = async () => {
-    setLoading(true);
-    try {
-      const { db } = await import("@/lib/db");
-      const { hasFirebase } = await import("@/lib/firebase");
-      const [items, cats] = await Promise.all([db.getProducts(), db.getCategories()]);
-      setProducts(items);
-      setDbCategories(cats.map(c => c.name));
-      setSource(hasFirebase ? "google" : "local");
-    } catch {
-      toast.error("حصلت مشكلة أثناء تحميل المنتجات");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    void reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let active = true;
+    let unsubscribe = () => {};
+
+    void (async () => {
+      try {
+        const [{ db }, { hasFirebase }] = await Promise.all([
+          import("@/lib/db"),
+          import("@/lib/firebase"),
+        ]);
+        if (!active) return;
+
+        setSource(hasFirebase ? "google" : "local");
+        unsubscribe = db.subscribeProducts((items) => {
+          if (!active) return;
+          setProducts(items);
+          setLoading(false);
+        }, (error) => {
+          if (!active) return;
+          console.error("Failed to subscribe to products:", error);
+          setLoading(false);
+          toast.error("تعذر تحميل المنتجات الآن. حدّث الصفحة وحاول مرة أخرى.");
+        });
+
+        const categories = await db.getCategories();
+        if (active) setDbCategories(categories.map((category) => category.name));
+      } catch (error) {
+        console.error("Failed to load storefront data:", error);
+        if (active) {
+          setLoading(false);
+          toast.error("حصلت مشكلة أثناء تحميل المنتجات");
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   const categories = useMemo(() => {

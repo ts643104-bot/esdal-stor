@@ -1,8 +1,6 @@
 import { useState, useEffect } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { ShoppingCart, Trash2, MessageCircle, Copy, Plus, Minus, CheckCircle, CalendarIcon, User } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { ShoppingCart, Trash2, MessageCircle, Copy, Plus, Minus, CheckCircle, User, FileText } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { MapPicker } from "@/components/MapPicker";
 import { useCart } from "@/contexts/CartContext";
@@ -37,8 +36,6 @@ function buildWhatsappMessage(
   customerAddress: string,
   customerPhone: string,
   governorate: string,
-  preferredTime: string,
-  preferredDate: string,
   orderId: string,
   note?: string,
   receiptUrl?: string,
@@ -54,8 +51,6 @@ function buildWhatsappMessage(
     `رقم التواصل: *${customerPhone}*`,
     `المحافظة: *${governorate}*`,
     `العنوان: *${customerAddress}*`,
-    `تاريخ التوصيل: *${preferredDate || "أي يوم"}*`,
-    `وقت التوصيل المفضل: *${preferredTime}*`,
     ...(note ? [`ملاحظة العميل: _${note}_`] : []),
     "",
     "الطلبات:",
@@ -92,7 +87,7 @@ function buildWhatsappMessage(
 
 export default function CartSheet() {
   const cart = useCart();
-  const { user, profile } = useAuth();
+  const { user, profile, refreshProfile } = useAuth();
   const { t, lang } = useLanguage();
   const [paymentMethod, setPaymentMethod] = useState<"cod" | "online">("cod");
   const [senderPhone, setSenderPhone] = useState("");
@@ -100,9 +95,6 @@ export default function CartSheet() {
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerAddress, setCustomerAddress] = useState("");
   const [governorate, setGovernorate] = useState("");
-  const [preferredTime, setPreferredTime] = useState("أي وقت");
-  const [preferredDate, setPreferredDate] = useState<Date | undefined>(undefined);
-  const [shippingType, setShippingType] = useState<"standard" | "express">("standard");
   const [successData, setSuccessData] = useState<{
     orderId: string;
     waUrl: string;
@@ -124,6 +116,8 @@ export default function CartSheet() {
   const [transferredAmount, setTransferredAmount] = useState<number | "">("");
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [savingTerms, setSavingTerms] = useState(false);
+  const [isTermsOpen, setIsTermsOpen] = useState(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [honeypot, setHoneypot] = useState(""); // Anti-bot honeypot field (hidden from humans)
@@ -147,10 +141,11 @@ export default function CartSheet() {
   }, []);
 
   const isValidInfo = customerName.trim().length > 1 && customerAddress.trim().length > 5 && isValidEgyptianPhone(customerPhone) && governorate !== "";
-  const canSubmit = isValidInfo && acceptedTerms;
+  const hasAcceptedTerms = Boolean(profile?.termsAccepted || acceptedTerms);
+  const canSubmit = isValidInfo && hasAcceptedTerms && !savingTerms;
 
   const selectedGov = EGYPT_GOVERNORATES.find(g => g.name === governorate);
-  const shippingCost = selectedGov ? selectedGov.cost + (shippingType === "express" ? 30 : 0) : 0;
+  const shippingCost = selectedGov?.cost || 0;
 
   const totalEarnedPoints = profile?.totalEarnedPoints || 0;
   let tierDiscountPct = 0;
@@ -178,7 +173,48 @@ export default function CartSheet() {
   const finalTotal = Math.max(0, cart.totalPrice - totalDiscount + shippingCost);
   const pointsEarned = Math.floor(cart.totalPrice / 10);
 
-  const handleCheckout = (confirmed = false) => {
+  const handleTermsChange = async (checked: boolean) => {
+    if (!checked) {
+      setAcceptedTerms(false);
+      return;
+    }
+    if (profile?.termsAccepted || savingTerms) return;
+    if (!user?.email) {
+      toast.error("يلزم تسجيل الدخول ببريد إلكتروني لتسجيل الموافقة على حسابك.");
+      return;
+    }
+
+    const accountEmail = user.email.trim().toLowerCase();
+    const acceptedAt = new Date().toISOString();
+    setSavingTerms(true);
+    try {
+      const { db } = await import("@/lib/db");
+      await db.saveUserProfile({
+        id: user.uid,
+        email: accountEmail,
+        name: profile?.name || cleanUserText(customerName || accountEmail.split("@")[0], 120),
+        phone: profile?.phone || customerPhone,
+        address: profile?.address || customerAddress,
+        governorate: profile?.governorate || governorate,
+        joinedAt: profile?.joinedAt || new Date().toISOString(),
+        loyaltyPoints: profile?.loyaltyPoints || 0,
+        totalEarnedPoints: profile?.totalEarnedPoints || 0,
+        termsAccepted: true,
+        termsAcceptedAt: acceptedAt,
+        termsAcceptedEmail: accountEmail,
+      });
+      setAcceptedTerms(true);
+      await refreshProfile();
+      toast.success("تم حفظ موافقتك على حسابك المرتبط ببريدك الإلكتروني");
+    } catch (error) {
+      console.error("Failed to save terms consent:", error);
+      toast.error("تعذر حفظ الموافقة. تحقق من اتصالك ثم حاول مرة أخرى.");
+    } finally {
+      setSavingTerms(false);
+    }
+  };
+
+  const handleCheckout = async (confirmed = false) => {
     if (isSubmitting) return;
     const safeName = cleanUserText(customerName, 120);
     const safeAddress = cleanUserText(customerAddress, 500);
@@ -192,13 +228,13 @@ export default function CartSheet() {
     }
 
     // Mandatory terms & conditions checkbox
-    if (!acceptedTerms) {
+    if (!hasAcceptedTerms) {
       toast.error("يجب الموافقة على الشروط والأحكام قبل تأكيد الطلب");
       return;
     }
 
     if (!user) {
-      window.location.href = "#/profile";
+      window.location.assign("#/profile");
       return;
     }
     if (!isValidInfo) {
@@ -224,23 +260,27 @@ export default function CartSheet() {
       return;
     }
 
-    if (paymentMethod === "cod" && !confirmed) {
+    if (!confirmed) {
       setIsConfirmOpen(true);
       return;
     }
 
     setIsSubmitting(true);
-    import("@/lib/db").then(async ({ db }) => {
-      const dateStr = preferredDate ? preferredDate.toLocaleDateString("ar-EG", { dateStyle: "long" }) : "أي يوم";
-      const promoText = appliedPromo ? ` [كوبون: ${appliedPromo.code}]` : "";
+    try {
+      const { db } = await import("@/lib/db");
       const pointsToRedeem = useLoyaltyPoints ? maxPointsToRedeem : 0;
+      const orderNoteWithPromo = [
+        safeNote,
+        appliedPromo ? `كوبون الخصم: ${appliedPromo.code}` : "",
+      ].filter(Boolean).join("\n");
+      const acceptedAt = profile?.termsAcceptedAt || new Date().toISOString();
 
-      const requestedTotal = finalTotal;
-    const orderId = await db.addOrder(
-        cart.items, requestedTotal, paymentMethod, senderPhone, safeName,
+      const orderId = await db.addOrder(
+        cart.items, finalTotal, paymentMethod, senderPhone, safeName,
         safeAddress, normalizedPhone, governorate, shippingCost,
-        `${shippingType === "express" ? "[Express] " : ""}${preferredTime}${promoText}`,
-        totalDiscount, dateStr, user?.uid, pointsEarned, pointsToRedeem, receiptUrl, safeNote, Number(transferredAmount) || undefined, true, new Date().toISOString()
+        undefined, totalDiscount, undefined, user?.uid, pointsEarned,
+        pointsToRedeem, receiptUrl, orderNoteWithPromo,
+        Number(transferredAmount) || undefined, true, acceptedAt, user?.email || ""
       );
 
       const itemsList = cart.items.map(it => `${it.qty}x ${it.product.name} (${it.product.price_egp} ج.م)`).join("\n");
@@ -248,11 +288,10 @@ export default function CartSheet() {
         _subject: `طلب جديد من هلا اليسر - رقم #${orderId}`,
         "رقم الطلب": orderId,
         "اسم العميل": customerName,
+        "البريد الإلكتروني المسجل": user?.email || "",
         "رقم التواصل": customerPhone,
         "المحافظة": governorate,
         "العنوان ورابط الموقع": customerAddress,
-        "تاريخ التوصيل": dateStr,
-        "وقت التوصيل": preferredTime,
         "طريقة الدفع": paymentMethod === "cod" ? "عند الاستلام" : "أونلاين - المبلغ بالكامل - رقم: " + senderPhone,
         "المنتجات": itemsList,
         "قيمة المنتجات": cart.totalPrice + " ج.م",
@@ -269,29 +308,7 @@ export default function CartSheet() {
         body: JSON.stringify(emailBody)
       }).catch(err => console.error("Failed to send email notification", err));
 
-      try {
-        const customers = (await db.getAllUsers()).filter((customer) => customer.termsAccepted);
-        const customerCount = customers.length;
-        const batchNumber = Math.floor(customerCount / 1000);
-        const notificationKey = `terms-consent-email-${batchNumber}`;
-        if (customerCount > 0 && customerCount % 1000 === 0 && !localStorage.getItem(notificationKey)) {
-          await fetch("https://formsubmit.co/ajax/tkalikrombo@gmail.com", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Accept: "application/json" },
-            body: JSON.stringify({
-              _subject: `دفعة موافقات الشروط رقم ${batchNumber}`,
-              "عدد العملاء الموافقين": customerCount,
-              "رقم الدفعة": batchNumber,
-              "تاريخ الوصول": new Date().toLocaleString("ar-EG")
-            })
-          });
-          localStorage.setItem(notificationKey, "sent");
-        }
-      } catch (consentError) {
-        console.error("Failed to send terms consent batch notification", consentError);
-      }
-
-      const waMsg = buildWhatsappMessage(cart.items, cart.totalPrice, shippingCost, totalDiscount, finalTotal, paymentMethod, senderPhone, safeName, safeAddress, normalizedPhone, governorate, `${shippingType === "express" ? "[Express] " : ""}${preferredTime}`, dateStr, orderId, safeNote, receiptUrl, transferredAmount);
+      const waMsg = buildWhatsappMessage(cart.items, cart.totalPrice, shippingCost, totalDiscount, finalTotal, paymentMethod, senderPhone, safeName, safeAddress, normalizedPhone, governorate, orderId, orderNoteWithPromo, receiptUrl, transferredAmount);
       const activePhone = getActiveWhatsappNumber(whatsappNumbers);
       const waUrl = `https://wa.me/${activePhone}?text=${encodeURIComponent(waMsg)}`;
 
@@ -300,16 +317,19 @@ export default function CartSheet() {
         details: { name: customerName, phone: customerPhone, items: [...cart.items], total: finalTotal }
       });
 
-      setTimeout(() => { window.open(waUrl, "_blank"); }, 600);
       cart.clear();
-    }).catch((error: any) => {
+    } catch (error: any) {
       const code = error?.code || "unknown";
       const message = code === "permission-denied"
-        ? "تم رفض حفظ الطلب من قاعدة البيانات. سيتم إصلاح إعدادات الأمان ثم أعد المحاولة."
+        ? "تعذر حفظ الطلب بسبب صلاحيات قاعدة البيانات. حاول تسجيل الخروج والدخول ثم أعد المحاولة."
+        : error?.message === "رصيد النقاط غير كافٍ لإتمام عملية الخصم"
+          ? error.message
         : "تعذر تسجيل الطلب حاليًا، حاول مرة أخرى";
       console.error("Order submission failed:", error);
       toast.error(message);
-    }).finally(() => setIsSubmitting(false));
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const copyNumber = () => {
@@ -551,39 +571,6 @@ export default function CartSheet() {
                           <Input id="customerAddress" value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} className="rounded-xl h-11" />
                           <MapPicker onLocationSelect={handleMapLocation} />
                         </div>
-                        <div className="space-y-3 rounded-xl border border-border/60 p-3">
-                          <Label className="text-xs font-bold opacity-70">تفاصيل التوصيل</Label>
-                          <div className="grid grid-cols-2 gap-2">
-                            <Button type="button" variant={shippingType === "standard" ? "default" : "outline"} onClick={() => setShippingType("standard")} className="h-10 text-xs">
-                              شحن عادي
-                            </Button>
-                            <Button type="button" variant={shippingType === "express" ? "default" : "outline"} onClick={() => setShippingType("express")} className="h-10 text-xs">
-                              شحن سريع (+30 ج.م)
-                            </Button>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <Popover>
-                              <PopoverTrigger asChild>
-                                <Button type="button" variant="outline" className="h-10 justify-start gap-2 px-2 text-xs">
-                                  <CalendarIcon className="h-4 w-4" />
-                                  {preferredDate ? preferredDate.toLocaleDateString(lang === "ar" ? "ar-EG" : "en-US") : "اختر يومًا"}
-                                </Button>
-                              </PopoverTrigger>
-                              <PopoverContent align="start" className="w-auto p-0" dir="rtl">
-                                <Calendar mode="single" selected={preferredDate} onSelect={setPreferredDate} disabled={{ before: new Date(new Date().setHours(0, 0, 0, 0)) }} />
-                              </PopoverContent>
-                            </Popover>
-                            <Select value={preferredTime} onValueChange={setPreferredTime} dir="rtl">
-                              <SelectTrigger className="h-10 text-xs"><SelectValue placeholder="وقت التوصيل" /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="أي وقت">أي وقت</SelectItem>
-                                <SelectItem value="صباحًا (9 ص - 12 م)">صباحًا (9 ص - 12 م)</SelectItem>
-                                <SelectItem value="ظهرًا (12 م - 4 م)">ظهرًا (12 م - 4 م)</SelectItem>
-                                <SelectItem value="مساءً (4 م - 9 م)">مساءً (4 م - 9 م)</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
                         <div className="space-y-2">
                           <Label htmlFor="orderNote" className="text-xs font-bold opacity-70">ملاحظات الطلب</Label>
                           <Textarea id="orderNote" value={orderNote} onChange={(e) => setOrderNote(e.target.value)} className="rounded-xl resize-none h-20" />
@@ -652,19 +639,51 @@ export default function CartSheet() {
                   />
                 </div>
 
-                <label className="flex items-start gap-3 cursor-pointer select-none rounded-xl border-border/60 bg-muted/20 p-3 transition-colors hover:bg-muted/40">
+                <div className="flex items-start gap-3 rounded-xl border border-border/60 bg-muted/20 p-3">
                   <input
                     type="checkbox"
-                    checked={acceptedTerms}
-                    onChange={(e) => setAcceptedTerms(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+                    checked={hasAcceptedTerms}
+                    disabled={Boolean(profile?.termsAccepted) || savingTerms}
+                    onChange={(e) => void handleTermsChange(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-primary disabled:cursor-not-allowed"
                   />
-                  <span className="text-xs font-bold text-muted-foreground leading-relaxed">
-                    أوافق على <span className="text-primary underline-offset-2">الشروط والأحكام</span> وسياسة الاستبدال والاسترجاع الخاصة بالمتجر
-                  </span>
-                </label>
+                  <div className="text-xs font-bold leading-relaxed text-muted-foreground">
+                    <div>{savingTerms ? "جاري حفظ موافقتك..." : hasAcceptedTerms ? "تم حفظ موافقتك على هذا الحساب." : "أوافق على الشروط والأحكام وسياسة الاستبدال والاسترجاع الخاصة بالمتجر."}</div>
+                    <Dialog open={isTermsOpen} onOpenChange={setIsTermsOpen}>
+                      <DialogTrigger asChild>
+                        <button type="button" className="mt-1 inline-flex items-center gap-1 font-bold text-primary underline underline-offset-2">
+                          <FileText className="h-3.5 w-3.5" /> اقرأ الشروط والأحكام
+                        </button>
+                      </DialogTrigger>
+                      <DialogContent dir="rtl" className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+                        <DialogHeader>
+                          <DialogTitle>الشروط والأحكام وسياسة الاستبدال والاسترجاع</DialogTitle>
+                          <DialogDescription>يرجى مراجعة المعلومات التالية قبل إتمام الطلب.</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4 text-sm leading-7 text-foreground">
+                          <section>
+                            <h3 className="font-bold">الطلب والأسعار</h3>
+                            <p>الأسعار بالجنيه المصري. يُسجَّل طلبك للمراجعة، ويؤكد المتجر التوفر وتفاصيل الشحن والتكلفة النهائية عبر وسيلة التواصل المسجلة.</p>
+                          </section>
+                          <section>
+                            <h3 className="font-bold">بيانات التوصيل والدفع</h3>
+                            <p>أدخل اسمك ورقم هاتفك وعنوانًا صحيحًا. تُحسب رسوم التوصيل حسب المحافظة. عند الدفع الإلكتروني، أرفق إثبات التحويل وانتظر مراجعة المتجر.</p>
+                          </section>
+                          <section>
+                            <h3 className="font-bold">الاستبدال والاسترجاع</h3>
+                            <p>للاستفسار عن الاستبدال أو الاسترجاع، تواصل مع المتجر عبر واتساب واذكر رقم الطلب. تُراجع كل حالة وفق سياسة المتجر والحقوق المقررة للمستهلك.</p>
+                          </section>
+                          <section>
+                            <h3 className="font-bold">الموافقة</h3>
+                            <p>تُحفظ موافقتك مرة واحدة على حسابك المرتبط بالبريد الإلكتروني المسجل، وتُستخدم بيانات الطلب لإتمام الشراء والتواصل بشأنه.</p>
+                          </section>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
+                </div>
 
-                <Button className="w-full h-14 text-lg font-black gap-3 rounded-2xl shadow-xl shadow-primary/20" onClick={() => handleCheckout()} disabled={!canSubmit || isSubmitting}>
+                <Button className="w-full h-14 text-lg font-black gap-3 rounded-2xl shadow-xl shadow-primary/20" onClick={() => void handleCheckout()} disabled={!canSubmit || isSubmitting}>
                   <MessageCircle className="h-6 w-6" />
                   {isSubmitting ? "جاري تسجيل الطلب..." : paymentMethod === "cod" ? "تأكيد طلب الدفع عند الاستلام" : "تأكيد الطلب أونلاين"}
                 </Button>
@@ -676,14 +695,15 @@ export default function CartSheet() {
         <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
           <AlertDialogContent dir="rtl" className="rounded-3xl">
             <AlertDialogHeader>
-              <AlertDialogTitle>تأكيد طلب الدفع عند الاستلام</AlertDialogTitle>
+              <AlertDialogTitle>تأكيد الطلب</AlertDialogTitle>
               <AlertDialogDescription>
-                سيتم تسجيل الطلب بقيمة <strong className="text-primary">{finalTotal.toLocaleString("ar-EG")} ج.م</strong>، والدفع يكون عند استلامه. هل تريد المتابعة؟
+                سيتم تسجيل طلبك بقيمة <strong className="text-primary">{finalTotal.toLocaleString("ar-EG")} ج.م</strong>.
+                {paymentMethod === "cod" ? " سيتم الدفع عند الاستلام." : " سيتم إرسال تفاصيل التحويل إلى المتجر للمراجعة."} هل تريد المتابعة؟
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>مراجعة الطلب</AlertDialogCancel>
-              <AlertDialogAction onClick={() => { setIsConfirmOpen(false); handleCheckout(true); }}>
+              <AlertDialogAction disabled={isSubmitting} onClick={() => { setIsConfirmOpen(false); void handleCheckout(true); }}>
                 نعم، سجّل الطلب
               </AlertDialogAction>
             </AlertDialogFooter>

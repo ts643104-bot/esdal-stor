@@ -49,6 +49,8 @@ export type Order = {
   note?: string;
   termsAccepted?: boolean;
   termsAcceptedAt?: string;
+  termsAcceptedEmail?: string;
+  customerConfirmedAt?: string;
 };
 
 export type StoreSettings = {
@@ -67,6 +69,7 @@ export type PromoCode = {
 
 export type UserProfile = {
   id: string;
+  email?: string;
   name: string;
   phone: string;
   address: string;
@@ -76,6 +79,7 @@ export type UserProfile = {
   totalEarnedPoints?: number;
   termsAccepted?: boolean;
   termsAcceptedAt?: string;
+  termsAcceptedEmail?: string;
 };
 
 export type Expense = {

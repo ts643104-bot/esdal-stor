@@ -2,7 +2,7 @@ import type { Product, CartItem, Order, Expense, StoreSettings, UserProfile, Pro
 import { nanoid } from "nanoid";
 import { isValidOrderQuantity, cleanUserText } from "./validation";
 import { dbFirestore, hasFirebase } from "./firebase";
-import { collection, doc, getDocs, getDoc, setDoc, deleteDoc, updateDoc, query, orderBy, where, runTransaction } from "firebase/firestore";
+import { collection, doc, getDocs, getDoc, setDoc, deleteDoc, updateDoc, query, orderBy, where, runTransaction, onSnapshot } from "firebase/firestore";
 
 const getLocalProducts = (): Product[] => {
   const stored = localStorage.getItem("esdal_products_v2");
@@ -13,15 +13,67 @@ const getLocalProducts = (): Product[] => {
   return fb;
 };
 
+const normalizeProduct = (id: string, data: Record<string, unknown>): Product | null => {
+  const name = typeof data.name === "string" ? data.name.trim() : "";
+  const price_egp = Number(data.price_egp);
+  if (!name || !Number.isFinite(price_egp) || price_egp < 0) return null;
+
+  const stock = Number(data.stock_quantity);
+  const stockQuantity = Number.isFinite(stock) && stock >= 0 ? stock : undefined;
+  const images = Array.isArray(data.images)
+    ? data.images.filter((image): image is string => typeof image === "string")
+    : undefined;
+
+  return {
+    ...(data as Partial<Product>),
+    id,
+    name,
+    price_egp,
+    image_url: typeof data.image_url === "string" ? data.image_url : images?.[0] || "",
+    images,
+    category: typeof data.category === "string" && data.category.trim() ? data.category.trim() : "عام",
+    in_stock: typeof data.in_stock === "boolean" ? data.in_stock : (stockQuantity ?? 10) > 0,
+    stock_quantity: stockQuantity,
+  };
+};
+
+const firestoreProducts = (docs: { id: string; data: () => Record<string, unknown> }[]) =>
+  docs.map((snapshot) => normalizeProduct(snapshot.id, snapshot.data())).filter((product): product is Product => product !== null);
+
 export const db = {
   getProducts: async (): Promise<Product[]> => {
     if (hasFirebase && dbFirestore) {
       const q = collection(dbFirestore, "products");
       const snap = await getDocs(q);
-      const data = snap.docs.map(d => ({ ...d.data(), id: d.id })) as Product[];
-      if (data.length > 0) return data;
+      return firestoreProducts(snap.docs);
     }
     return getLocalProducts();
+  },
+  subscribeProducts: (onChange: (products: Product[]) => void, onError?: (error: Error) => void) => {
+    if (hasFirebase && dbFirestore) {
+      return onSnapshot(
+        collection(dbFirestore, "products"),
+        (snap) => onChange(firestoreProducts(snap.docs)),
+        (error) => onError?.(error),
+      );
+    }
+
+    const loadLocal = () => onChange(getLocalProducts());
+    loadLocal();
+    window.addEventListener("esdal:products-updated", loadLocal);
+    return () => window.removeEventListener("esdal:products-updated", loadLocal);
+  },
+  saveProduct: async (product: Product) => {
+    if (hasFirebase && dbFirestore) {
+      await setDoc(doc(dbFirestore, "products", product.id), product);
+    } else {
+      const products = getLocalProducts();
+      localStorage.setItem(
+        "esdal_products_v2",
+        JSON.stringify([product, ...products.filter((existing) => existing.id !== product.id)]),
+      );
+      window.dispatchEvent(new Event("esdal:products-updated"));
+    }
   },
   saveProducts: async (products: Product[]) => {
     if (hasFirebase && dbFirestore) {
@@ -31,6 +83,7 @@ export const db = {
       }
     } else {
       localStorage.setItem("esdal_products_v2", JSON.stringify(products));
+      window.dispatchEvent(new Event("esdal:products-updated"));
     }
   },
   deleteProduct: async (id: string) => {
@@ -39,6 +92,7 @@ export const db = {
     } else {
       const stored = getLocalProducts().filter(p => p.id !== id);
       localStorage.setItem("esdal_products_v2", JSON.stringify(stored));
+      window.dispatchEvent(new Event("esdal:products-updated"));
     }
   },
   getOrders: async (): Promise<Order[]> => {
@@ -76,7 +130,7 @@ export const db = {
     senderPhone?: string, customerName?: string, customerAddress?: string,
     customerPhone?: string, governorate?: string, shippingCost?: number,
     preferredTime?: string, discountApplied?: number, preferredDate?: string,
-    userId?: string, loyaltyPointsEarned?: number, loyaltyPointsRedeemed?: number, paymentReceiptUrl?: string, note?: string, transferredAmount?: number, termsAccepted = false, termsAcceptedAt?: string
+    userId?: string, loyaltyPointsEarned?: number, loyaltyPointsRedeemed?: number, paymentReceiptUrl?: string, note?: string, transferredAmount?: number, termsAccepted = false, termsAcceptedAt?: string, termsAcceptedEmail?: string
   ): Promise<string> => {
     if (!userId) throw new Error("يجب تسجيل الدخول لإتمام الطلب");
     if (!items.length || items.some((item) => !item.product.id || !isValidOrderQuantity(item.qty))) {
@@ -113,47 +167,73 @@ export const db = {
       loyaltyPointsRedeemed,
       paymentReceiptUrl,
       transferredAmount,
-        note: safeNote,
-        termsAccepted,
-        termsAcceptedAt: termsAcceptedAt || (termsAccepted ? new Date().toISOString() : undefined)
-      };
+      note: safeNote,
+      termsAccepted,
+      termsAcceptedAt: termsAcceptedAt || (termsAccepted ? new Date().toISOString() : undefined),
+      termsAcceptedEmail: termsAcceptedEmail?.trim().toLowerCase() || undefined,
+    };
     const orderToSave = Object.fromEntries(
       Object.entries(newOrder).filter(([, value]) => value !== undefined)
     ) as Order;
     if (hasFirebase && dbFirestore) {
-      // High security: orders must be tied to an authenticated user (anonymous auth is OK)
-      if (!userId) {
-        throw new Error("يجب تسجيل الدخول (حتى لو بشكل مجهول) لإتمام الطلب");
-      }
-      // Security Enhancement: Validate points before saving
-      if (loyaltyPointsRedeemed && loyaltyPointsRedeemed > 0) {
-        const profile = await db.getUserProfile(userId);
-        if (!profile || (profile.loyaltyPoints || 0) < loyaltyPointsRedeemed) {
+      const orderRef = doc(dbFirestore, "orders", orderToSave.id);
+      const profileRef = doc(dbFirestore, "users", userId);
+      await runTransaction(dbFirestore, async (transaction) => {
+        const profileSnap = await transaction.get(profileRef);
+        const profile = profileSnap.exists()
+          ? ({ ...profileSnap.data(), id: profileSnap.id } as UserProfile)
+          : {
+              id: userId,
+              name: safeName,
+              phone: customerPhone || "",
+              address: safeAddress,
+              governorate: safeGovernorate,
+              joinedAt: new Date().toISOString(),
+            };
+        const currentPoints = profile.loyaltyPoints || 0;
+        if (currentPoints < (loyaltyPointsRedeemed || 0)) {
           throw new Error("رصيد النقاط غير كافٍ لإتمام عملية الخصم");
         }
-      }
-      await setDoc(doc(dbFirestore, "orders", orderToSave.id), orderToSave);
+
+        transaction.set(orderRef, orderToSave);
+        const updatedProfile = {
+          ...profile,
+          email: profile.email || orderToSave.termsAcceptedEmail,
+          name: safeName,
+          phone: customerPhone || profile.phone,
+          address: safeAddress,
+          governorate: safeGovernorate,
+          loyaltyPoints: currentPoints - (loyaltyPointsRedeemed || 0) + (loyaltyPointsEarned || 0),
+          totalEarnedPoints: (profile.totalEarnedPoints || 0) + (loyaltyPointsEarned || 0),
+          termsAccepted: termsAccepted || profile.termsAccepted || false,
+          termsAcceptedAt: profile.termsAcceptedAt || orderToSave.termsAcceptedAt,
+          termsAcceptedEmail: profile.termsAcceptedEmail || orderToSave.termsAcceptedEmail,
+        };
+        transaction.set(
+          profileRef,
+          Object.fromEntries(Object.entries(updatedProfile).filter(([, value]) => value !== undefined)),
+          { merge: true },
+        );
+      });
     } else {
       const orders = await db.getOrders();
       orders.unshift(orderToSave);
       localStorage.setItem("esdal_orders_v2", JSON.stringify(orders));
-    }
-
-    // Update loyalty points if userId is provided
-    if (userId) {
       const profile = await db.getUserProfile(userId);
-      if (profile) {
-        const currentPoints = profile.loyaltyPoints || 0;
-        const totalEarned = profile.totalEarnedPoints || 0;
-        const newPoints = currentPoints - (loyaltyPointsRedeemed || 0) + (loyaltyPointsEarned || 0);
-        await db.saveUserProfile({
-          ...profile,
-          loyaltyPoints: newPoints,
-          totalEarnedPoints: totalEarned + (loyaltyPointsEarned || 0),
-          termsAccepted: termsAccepted ? true : profile.termsAccepted,
-          termsAcceptedAt: termsAcceptedAt || profile.termsAcceptedAt
-        });
-      }
+      await db.saveUserProfile({
+        id: userId,
+        email: profile?.email || orderToSave.termsAcceptedEmail,
+        name: safeName,
+        phone: customerPhone || profile?.phone || "",
+        address: safeAddress,
+        governorate: safeGovernorate,
+        joinedAt: profile?.joinedAt || new Date().toISOString(),
+        loyaltyPoints: (profile?.loyaltyPoints || 0) - (loyaltyPointsRedeemed || 0) + (loyaltyPointsEarned || 0),
+        totalEarnedPoints: (profile?.totalEarnedPoints || 0) + (loyaltyPointsEarned || 0),
+        termsAccepted: termsAccepted || profile?.termsAccepted || false,
+        termsAcceptedAt: profile?.termsAcceptedAt || orderToSave.termsAcceptedAt,
+        termsAcceptedEmail: profile?.termsAcceptedEmail || orderToSave.termsAcceptedEmail,
+      });
     }
 
     return newOrder.id;
@@ -167,6 +247,31 @@ export const db = {
       localStorage.setItem("esdal_orders_v2", JSON.stringify(updated));
     }
   },
+  confirmOrderReceipt: async (orderId: string): Promise<string> => {
+    const confirmedAt = new Date().toISOString();
+    if (hasFirebase && dbFirestore) {
+      const orderRef = doc(dbFirestore, "orders", orderId);
+      return runTransaction(dbFirestore, async (transaction) => {
+        const orderSnap = await transaction.get(orderRef);
+        if (!orderSnap.exists()) throw new Error("الطلب غير موجود");
+        const order = orderSnap.data() as Order;
+        if (order.status !== "shipped") throw new Error("لا يمكن تأكيد الاستلام قبل شحن الطلب");
+        if (order.customerConfirmedAt) return order.customerConfirmedAt;
+        transaction.update(orderRef, { customerConfirmedAt: confirmedAt });
+        return confirmedAt;
+      });
+    }
+
+    const orders = await db.getOrders();
+    const order = orders.find((entry) => entry.id === orderId);
+    if (!order) throw new Error("الطلب غير موجود");
+    if (order.status !== "shipped") throw new Error("لا يمكن تأكيد الاستلام قبل شحن الطلب");
+    if (order.customerConfirmedAt) return order.customerConfirmedAt;
+    localStorage.setItem("esdal_orders_v2", JSON.stringify(
+      orders.map((entry) => entry.id === orderId ? { ...entry, customerConfirmedAt: confirmedAt } : entry),
+    ));
+    return confirmedAt;
+  },
   updateOrderStatusAndDeductStock: async (orderId: string, items: CartItem[]) => {
     if (hasFirebase && dbFirestore) {
       await runTransaction(dbFirestore, async (transaction) => {
@@ -175,21 +280,34 @@ export const db = {
         if (!orderSnap.exists()) {
           throw new Error("Order does not exist!");
         }
+        const order = orderSnap.data() as Order;
+        if (order.status === "completed") return;
+        if (order.status !== "prepared" && order.status !== "shipped") {
+          throw new Error("لا يمكن تأكيد استلام هذا الطلب في حالته الحالية");
+        }
 
-        const productRefs = items.map(item => doc(dbFirestore!, "products", item.product.id));
+        const quantityByProduct = new Map<string, number>();
+        for (const item of order.items || items) {
+          quantityByProduct.set(
+            item.product.id,
+            (quantityByProduct.get(item.product.id) || 0) + item.qty,
+          );
+        }
+        const productEntries = Array.from(quantityByProduct.entries());
+        const productRefs = productEntries.map(([productId]) => doc(dbFirestore!, "products", productId));
         const productSnaps = await Promise.all(productRefs.map(ref => transaction.get(ref)));
 
         productSnaps.forEach((pSnap, index) => {
           if (pSnap.exists()) {
-            const item = items[index];
+            const quantity = productEntries[index][1];
             const pData = pSnap.data() as Product;
             const currentStock = pData.stock_quantity ?? 10;
-            const newStock = Math.max(0, currentStock - item.qty);
+            const newStock = Math.max(0, currentStock - quantity);
             const currentSales = pData.sales_count ?? 0;
             transaction.update(pSnap.ref, {
               stock_quantity: newStock,
               in_stock: newStock > 0,
-              sales_count: currentSales + item.qty
+              sales_count: currentSales + quantity
             });
           }
         });
@@ -198,12 +316,18 @@ export const db = {
       });
     } else {
       const orders = await db.getOrders();
+      const order = orders.find((entry) => entry.id === orderId);
+      if (!order) throw new Error("Order does not exist!");
+      if (order.status === "completed") return;
+      if (order.status !== "prepared" && order.status !== "shipped") {
+        throw new Error("لا يمكن تأكيد استلام هذا الطلب في حالته الحالية");
+      }
       const updatedOrders = orders.map(o => o.id === orderId ? { ...o, status: "completed" as const } : o);
       localStorage.setItem("esdal_orders_v2", JSON.stringify(updatedOrders));
 
       const products = await db.getProducts();
       let updatedProducts = [...products];
-      for (const item of items) {
+      for (const item of order.items) {
         updatedProducts = updatedProducts.map(p => {
           if (p.id === item.product.id) {
             const currentStock = p.stock_quantity ?? 10;
@@ -215,6 +339,7 @@ export const db = {
         });
       }
       localStorage.setItem("esdal_products_v2", JSON.stringify(updatedProducts));
+      window.dispatchEvent(new Event("esdal:products-updated"));
     }
   },
   clearOrders: async () => {
@@ -300,7 +425,7 @@ export const db = {
   },
   saveUserProfile: async (profile: UserProfile) => {
     if (hasFirebase && dbFirestore) {
-      await setDoc(doc(dbFirestore, "users", profile.id), profile);
+      await setDoc(doc(dbFirestore, "users", profile.id), profile, { merge: true });
     } else {
       const stored = localStorage.getItem("esdal_users_v2");
       const users: UserProfile[] = stored ? JSON.parse(stored) : [];

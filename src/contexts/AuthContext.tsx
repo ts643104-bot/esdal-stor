@@ -60,8 +60,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       setUser(u);
-      await fetchProfile(u.uid);
-      setLoading(false);
+      try {
+        await fetchProfile(u.uid);
+      } catch (error) {
+        console.error("Failed to load account profile:", error);
+        setProfile(null);
+      } finally {
+        setLoading(false);
+      }
     });
 
     return () => unsubscribe();
