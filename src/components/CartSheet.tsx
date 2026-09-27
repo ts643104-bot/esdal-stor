@@ -107,6 +107,7 @@ export default function CartSheet() {
     }
   } | null>(null);
   const [discountPct, setDiscountPct] = useState(0);
+  const [bankAccountNumber, setBankAccountNumber] = useState(VODAFONE_CASH_NUMBER);
   const [whatsappNumbers, setWhatsappNumbers] = useState<string[]>([]);
   const [useLoyaltyPoints, setUseLoyaltyPoints] = useState(false);
   const [orderNote, setOrderNote] = useState("");
@@ -132,12 +133,24 @@ export default function CartSheet() {
   }, [profile]);
 
   useEffect(() => {
+    let active = true;
+    let unsubscribe: (() => void) | undefined;
     import("@/lib/db").then(({ db }) => {
-      db.getSettings().then(s => {
+      if (!active) return;
+      unsubscribe = db.subscribeSettings((s) => {
+        if (!active) return;
         setDiscountPct(s.discountPercentage || 0);
-        if (s.whatsappNumbers) setWhatsappNumbers(s.whatsappNumbers);
-      });
+        setBankAccountNumber(s.bankAccountNumber?.trim() || VODAFONE_CASH_NUMBER);
+        setWhatsappNumbers(s.whatsappNumbers || []);
+      }, (error) => console.warn("Failed to watch store settings", error));
+    }).catch((error) => {
+      console.warn("Failed to load store settings", error);
     });
+
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
   }, []);
 
   const isValidInfo = customerName.trim().length > 1 && customerAddress.trim().length > 5 && isValidEgyptianPhone(customerPhone) && governorate !== "";
@@ -332,9 +345,13 @@ export default function CartSheet() {
     }
   };
 
-  const copyNumber = () => {
-    navigator.clipboard.writeText(VODAFONE_CASH_NUMBER);
-    toast.success("تم نسخ رقم فودافون كاش");
+  const copyNumber = async () => {
+    try {
+      await navigator.clipboard.writeText(bankAccountNumber);
+      toast.success("تم نسخ رقم التحويل");
+    } catch {
+      toast.error("تعذر نسخ الرقم. انسخه يدويًا من الشاشة.");
+    }
   };
 
   const handleReceiptUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -592,7 +609,7 @@ export default function CartSheet() {
                                 <div className="bg-background p-3 rounded-lg border border-dashed border-primary/40 text-center">
                                   <p className="text-[10px] font-bold text-muted-foreground mb-1">حول المبلغ إلى الرقم:</p>
                                   <div className="flex items-center justify-center gap-2">
-                                    <span className="text-lg font-mono font-black text-primary">{VODAFONE_CASH_NUMBER}</span>
+                                    <span className="text-lg font-mono font-black text-primary" dir="ltr">{bankAccountNumber}</span>
                                     <Button size="icon" variant="ghost" className="h-7 w-7" onClick={copyNumber}><Copy className="h-4 w-4" /></Button>
                                   </div>
                                 </div>

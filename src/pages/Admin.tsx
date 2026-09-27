@@ -576,6 +576,14 @@ export default function Admin() {
       await db.saveSettings(clean);
       setSettings(clean);
       toast.success("تم حفظ إعدادات المتجر بنجاح");
+    } catch (error) {
+      console.error("Failed to save store settings:", error);
+      const code = typeof error === "object" && error !== null && "code" in error
+        ? String((error as { code?: unknown }).code)
+        : "";
+      toast.error(code.includes("permission-denied")
+        ? "حساب الإدارة لا يملك صلاحية حفظ الإعدادات. سجّل الدخول بحساب الإدارة الصحيح."
+        : "تعذر حفظ الإعدادات على الخادم. تحقق من الاتصال ثم أعد المحاولة.");
     } finally {
       setSavingSettings(false);
     }

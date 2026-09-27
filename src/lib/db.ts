@@ -428,15 +428,31 @@ export const db = {
     const stored = localStorage.getItem("esdal_settings_v2");
     return stored ? JSON.parse(stored) : { discountPercentage: 0 };
   },
+  subscribeSettings: (onChange: (settings: StoreSettings) => void, onError?: (error: Error) => void) => {
+    if (hasFirebase && dbFirestore) {
+      return onSnapshot(
+        doc(dbFirestore, "settings", "store"),
+        (snapshot) => onChange(snapshot.exists()
+          ? snapshot.data() as StoreSettings
+          : { discountPercentage: 0, whatsappNumbers: [] }),
+        (error) => onError?.(error),
+      );
+    }
+
+    const loadLocalSettings = () => {
+      const stored = localStorage.getItem("esdal_settings_v2");
+      onChange(stored ? JSON.parse(stored) as StoreSettings : { discountPercentage: 0, whatsappNumbers: [] });
+    };
+    loadLocalSettings();
+    window.addEventListener("esdal:settings-updated", loadLocalSettings);
+    return () => window.removeEventListener("esdal:settings-updated", loadLocalSettings);
+  },
   saveSettings: async (settings: StoreSettings) => {
-    try {
-      if (hasFirebase && dbFirestore) {
-        await setDoc(doc(dbFirestore, "settings", "store"), withoutUndefined(settings));
-      }
-    } catch (e) {
-      console.warn("Failed to save store settings to Firebase", e);
+    if (hasFirebase && dbFirestore) {
+      await setDoc(doc(dbFirestore, "settings", "store"), withoutUndefined(settings));
     }
     localStorage.setItem("esdal_settings_v2", JSON.stringify(settings));
+    window.dispatchEvent(new Event("esdal:settings-updated"));
   },
   getUserProfile: async (id: string): Promise<UserProfile | null> => {
     if (hasFirebase && dbFirestore) {

@@ -10,19 +10,21 @@ export function cn(...inputs: ClassValue[]) {
  * If multiple numbers are provided, rotates through them based on timestamp
  */
 export function getActiveWhatsappNumber(numbers?: string[]): string {
-  // Default fallback number
   const defaultNumber = "201140971703";
-  
-  if (!numbers || numbers.length === 0) {
-    return defaultNumber;
-  }
+  if (!numbers?.length) return defaultNumber;
 
-  if (numbers.length === 1) {
-    return numbers[0];
-  }
+  // wa.me needs an international number without the local leading zero.
+  const normalizeForWhatsapp = (value: string) => {
+    const digits = value.replace(/\D/g, "");
+    if (digits.startsWith("20") && digits.length === 12) return digits;
+    if (digits.startsWith("0") && digits.length === 11) return `20${digits.slice(1)}`;
+    if (digits.startsWith("1") && digits.length === 10) return `20${digits}`;
+    return digits;
+  };
+  const validNumbers = numbers.map(normalizeForWhatsapp).filter(Boolean);
+  if (!validNumbers.length) return defaultNumber;
+  if (validNumbers.length === 1) return validNumbers[0];
 
-  // Use timestamp-based rotation for smooth distribution
-  const now = Date.now();
-  const index = Math.floor((now / 1000) % numbers.length); // Cycle every second
-  return numbers[index];
+  const index = Math.floor(Date.now() / 1000) % validNumbers.length;
+  return validNumbers[index];
 }
