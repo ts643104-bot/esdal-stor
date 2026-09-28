@@ -43,10 +43,12 @@ export function toWhatsappNumber(value?: string | null): string | null {
 }
 
 /**
- * Get the active WhatsApp number for outgoing messages.
+ * Get the WhatsApp number that receives store messages.
  *
- * Falls back to DEFAULT_WHATSAPP_NUMBER when the store has no valid number
- * configured, and rotates between several numbers to spread incoming chats.
+ * The FIRST valid number in the list is the primary one and always wins, so the
+ * admin can control exactly where orders arrive by putting their number at the
+ * top. Any further numbers are kept only as a fallback, and are used one at a
+ * time only if the primary is missing or invalid.
  */
 export function getActiveWhatsappNumber(numbers?: string[]): string {
   const validNumbers = (numbers || [])
@@ -54,10 +56,7 @@ export function getActiveWhatsappNumber(numbers?: string[]): string {
     .filter((n): n is string => Boolean(n));
 
   if (!validNumbers.length) return DEFAULT_WHATSAPP_NUMBER;
-  if (validNumbers.length === 1) return validNumbers[0];
-
-  const index = Math.floor(Date.now() / 1000) % validNumbers.length;
-  return validNumbers[index];
+  return validNumbers[0];
 }
 
 /** Build a wa.me deep link with a pre-filled message. */

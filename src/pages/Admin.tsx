@@ -1632,7 +1632,7 @@ export default function Admin() {
 
                 <div className="space-y-4 bg-muted/50 p-4 rounded-xl border">
                   <div className="flex items-center gap-2 mb-2"><MessageCircle className="h-5 w-5 text-green-600" /><h3 className="font-semibold text-lg">أرقام الوتساب للتواصل</h3></div>
-                  <p className="text-sm text-muted-foreground mb-4">أضف 2 أو أكثر من أرقام الوتساب. سيتم التبديل التلقائي بينهم عند كل رسالة.</p>
+                  <p className="text-sm text-muted-foreground mb-4">أضف رقم الوتساب الذي تريد أن تصل إليه الطلبات في <strong>الأول</strong>؛ كل الطلبات ستذهب إليه. أي أرقام إضافية تُحفظ كبديل فقط ولا تُستخدم إلا إذا كان الرقم الأول غير صالح.</p>
                   <div className="space-y-2 max-w-sm">
                     <Label htmlFor="whatsapp">رقم الوتساب</Label>
                     <div className="flex gap-2">
@@ -1642,7 +1642,7 @@ export default function Admin() {
                   </div>
                   {(settings.whatsappNumbers || []).length > 0 && (
                     <div className="mt-3 space-y-2">
-                      <p className="text-sm font-medium">الأرقام المضافة ({settings.whatsappNumbers?.length}):</p>
+                      <p className="text-sm font-medium">الأرقام المضافة ({settings.whatsappNumbers?.length}) — الأول يستقبل كل الطلبات:</p>
                       <div className="grid grid-cols-1 gap-2">
                         {settings.whatsappNumbers?.map((phone, idx) => (
                           <div key={idx} className="flex items-center justify-between bg-white p-2 rounded border">

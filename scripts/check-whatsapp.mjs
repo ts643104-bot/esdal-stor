@@ -15,8 +15,7 @@ const DEFAULT = "201140971703";
 const getActive = (numbers) => {
   const valid = (numbers || []).map(toWhatsappNumber).filter(Boolean);
   if (!valid.length) return DEFAULT;
-  if (valid.length === 1) return valid[0];
-  return valid[Math.floor(Date.now() / 1000) % valid.length];
+  return valid[0];
 };
 
 const cases = [
@@ -40,15 +39,19 @@ for (const [input, expected, label] of cases) {
   console.log(`${ok ? "PASS" : "FAIL"}  ${label.padEnd(32)} input=${JSON.stringify(input).padEnd(18)} got=${JSON.stringify(got)} expected=${JSON.stringify(expected)}`);
 }
 
-// The bug that broke checkout: numbers saved in a bad format must never
-// reach wa.me as a malformed link.
+// The bug that broke checkout: every order must reach the FIRST configured
+// number, never a rotation.
 console.log("\n-- link construction --");
 const bad = getActive(["20123456789"]);
 console.log("all-invalid list falls back to default:", bad === DEFAULT, `-> ${bad}`);
 console.log("empty list falls back to default:", getActive([]) === DEFAULT);
 console.log("undefined list falls back to default:", getActive(undefined) === DEFAULT);
 const mixed = getActive(["01140971703", "20123456789"]);
-console.log("valid entries win over invalid:", mixed === "201140971703", `-> ${mixed}`);
+console.log("first valid wins over later invalid:", mixed === "201140971703", `-> ${mixed}`);
+const twoValid = getActive(["201140971703", "201122310891"]);
+console.log("FIRST number always wins (no rotation):", twoValid === "201140971703", `-> ${twoValid}`);
+const reversed = getActive(["201122310891", "201140971703"]);
+console.log("order matters - admin controls destination:", reversed === "201122310891", `-> ${reversed}`);
 const link = `https://wa.me/${getActive(["01140971703"])}?text=${encodeURIComponent("مرحبا")}`;
 console.log("sample link:", link.slice(0, 60) + "...");
 console.log(link.startsWith("https://wa.me/201140971703?text=") ? "PASS link format" : "FAIL link format");
