@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { auth, hasFirebase } from "@/lib/firebase";
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut, GoogleAuthProvider, FacebookAuthProvider, signInWithPopup } from "firebase/auth";
 import { db } from "@/lib/db";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { Link } from "wouter";
@@ -13,14 +13,14 @@ import { toast } from "sonner";
 import { ChevronRight, ChevronLeft, Package, UserCircle, LogOut, Award, CheckCircle, Clock, Truck, Settings, Plus, Trash2 } from "lucide-react";
 import { MapPicker } from "@/components/MapPicker";
 import { EGYPT_GOVERNORATES } from "@/lib/constants";
-import { isValidEgyptianPhone, normalizeEgyptianPhone } from "@/lib/validation";
+import { isValidEgyptianPhone, normalizeEgyptianPhone, cleanUserText } from "@/lib/validation";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Order, UserProfile } from "@/lib/types";
 
 export default function Profile() {
   const { user, profile, loading, logout, refreshProfile } = useAuth();
   const { t, lang } = useLanguage();
-  
+
   const ADMIN_EMAIL = (import.meta as any).env?.VITE_ADMIN_EMAIL?.toString()?.trim()?.toLowerCase() || "admin@hala-alyusr.com";
 
   const [email, setEmail] = useState("");
@@ -30,7 +30,7 @@ export default function Profile() {
   const [authLoading, setAuthLoading] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
   const [authErrors, setAuthErrors] = useState<{email?: string; password?: string; general?: string}>({});
-  
+
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
@@ -77,6 +77,78 @@ export default function Profile() {
 
     return () => { active = false; };
   }, [user]);
+
+  const handleProviderAuth = async (provider: "google.com" | "facebook.com") => {
+    if (!hasFirebase || !auth) {
+      setAuthErrors({ general: "نظام تسجيل الدخول غير متصل. تحقق من مفاتيح Firebase." });
+      return;
+    }
+    setAuthLoading(true);
+    setAuthErrors({});
+    try {
+      const p = provider === "google.com" ? new GoogleAuthProvider() : new FacebookAuthProvider();
+      // Always ask the provider to return an email so the profile can be filled in.
+      p.setCustomParameters({ prompt: "select_account" });
+
+      const cred = await signInWithPopup(auth, p);
+      const firebaseUser = cred.user;
+      if (!firebaseUser?.email) {
+        throw new Error("لم يتم إرجاع بريد إلكتروني من المزوّد. تأكد من السماح بالبريد في إعدادات حسابك.");
+      }
+
+      const accountEmail = firebaseUser.email.toLowerCase();
+      if (accountEmail === ADMIN_EMAIL) {
+        // The admin account is for the dashboard only - never a customer account.
+        await signOut(auth);
+        setAuthErrors({ general: "هذا الحساب مخصص لإدارة الموقع فقط. يرجى الدخول من لوحة التحكم." });
+        return;
+      }
+
+      // First time through? Create the profile, otherwise keep what they already have.
+      const existing = await db.getUserProfile(firebaseUser.uid);
+      if (!existing) {
+        const displayName = (firebaseUser.displayName || accountEmail.split("@")[0]).trim();
+        await db.saveUserProfile({
+          id: firebaseUser.uid,
+          email: accountEmail,
+          name: cleanUserText(displayName, 120),
+          phone: firebaseUser.phoneNumber || "",
+          address: "",
+          governorate: "",
+          joinedAt: new Date().toISOString(),
+          loyaltyPoints: 0,
+          totalEarnedPoints: 0,
+        });
+        toast.success(lang === "ar" ? "تم إنشاء حسابك بنجاح" : "Your account was created");
+      } else {
+        // Keep the email in sync in case it changed at the provider.
+        if (existing.email !== accountEmail) {
+          await db.saveUserProfile({ ...existing, id: firebaseUser.uid, email: accountEmail });
+        }
+        toast.success(lang === "ar" ? "تم تسجيل الدخول بنجاح" : "Signed in successfully");
+      }
+    } catch (err: any) {
+      console.error("Provider sign-in failed:", err);
+      const code = err?.code || "";
+      let message = lang === "ar" ? "تعذر تسجيل الدخول. حاول مرة أخرى." : "Sign-in failed. Please try again.";
+      if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+        message = lang === "ar" ? "تم إلغاء تسجيل الدخول." : "Sign-in was cancelled.";
+      } else if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment") {
+        message = lang === "ar"
+          ? "المتصفح منع النافذة المنبثقة. اسمح بالنوافذ المنبثقة لهذا الموقع ثم أعد المحاولة."
+          : "Your browser blocked the pop-up. Allow pop-ups for this site and try again.";
+      } else if (code === "auth/account-exists-with-different-credential") {
+        message = lang === "ar"
+          ? "يوجد حساب بهذا البريد مسجّل بطريقة أخرى. سجّل دخول بالبريد وكلمة المرور."
+          : "An account with this email already exists using a different sign-in method.";
+      } else if (err?.message) {
+        message = err.message;
+      }
+      setAuthErrors({ general: message });
+    } finally {
+      setAuthLoading(false);
+    }
+  };
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -447,6 +519,42 @@ export default function Profile() {
                   ? (t("auth.register_desc" as any) || "أنشئ حساباً لحفظ بياناتك وتتبع طلباتك بسهولة")
                   : (t("auth.login_desc" as any) || "سجل الدخول لمتابعة طلباتك وتعديل بياناتك")}
               </p>
+            </div>
+
+            {/* Social sign-in */}
+            <div className="space-y-3 mb-6">
+              <Button
+                type="button"
+                onClick={() => void handleProviderAuth("google.com")}
+                disabled={authLoading}
+                className="w-full h-12 rounded-xl font-bold gap-3 bg-white text-foreground border border-border hover:bg-muted/50 text-foreground shadow-sm"
+              >
+                <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="#4285F4" d="M23.52 12.27c0-.85-.08-1.67-.22-2.45H12v4.64h6.45a5.52 5.52 0 0 1-2.4 3.62v3h3.88c2.27-2.09 3.59-5.17 3.59-8.81z" />
+                  <path fill="#34A853" d="M12 24c3.24 0 5.96-1.08 7.93-2.91l-3.88-3c-1.08.72-2.45 1.15-4.05 1.15-3.12 0-5.77-2.11-6.71-4.95H1.28v3.11A12 12 0 0 0 12 24z" />
+                  <path fill="#FBBC05" d="M5.29 14.29a7.2 7.2 0 0 1 0-4.58V6.6H1.28a12 12 0 0 0 0 10.8l4.01-3.11z" />
+                  <path fill="#EA4335" d="M12 4.75c1.76 0 3.34.61 4.59 1.79l3.43-3.43C17.95 1.19 15.24 0 12 0A12 12 0 0 0 1.28 6.6l4.01 3.11C6.23 6.86 8.88 4.75 12 4.75z" />
+                </svg>
+                {lang === "ar" ? "المتابعة باستخدام Google" : "Continue with Google"}
+              </Button>
+
+              <Button
+                type="button"
+                onClick={() => void handleProviderAuth("facebook.com")}
+                disabled={authLoading}
+                className="w-full h-12 rounded-xl font-bold gap-3 bg-[#1877F2] text-white hover:bg-[#1461c4] shadow-sm"
+              >
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07C0 18.1 4.39 23.1 10.13 24v-8.44H7.08v-3.49h3.05V9.41c0-3.02 1.79-4.69 4.53-4.69 1.31 0 2.68.24 2.68.24v2.96h-1.51c-1.49 0-1.96.93-1.96 1.89v2.26h3.33l-.53 3.49h-2.8V24C19.61 23.1 24 18.1 24 12.07z" />
+                </svg>
+                {lang === "ar" ? "المتابعة باستخدام Facebook" : "Continue with Facebook"}
+              </Button>
+
+              <div className="flex items-center gap-3 py-1">
+                <div className="flex-1 h-px bg-border" />
+                <span className="text-xs text-muted-foreground font-bold">أو بالبريد الإلكتروني</span>
+                <div className="flex-1 h-px bg-border" />
+              </div>
             </div>
 
             <form onSubmit={handleAuth} className="space-y-6">
