@@ -523,6 +523,11 @@ export default function Profile() {
 
             {/* Social sign-in */}
             <div className="space-y-3 mb-6">
+              <p className="text-xs text-muted-foreground text-center leading-relaxed">
+                {lang === "ar"
+                  ? "الدخول السريع يتم بحسابك في Google أو Facebook مباشرة، بدون كلمة مرور."
+                  : "Quick sign-in uses your Google or Facebook account directly - no password needed."}
+              </p>
               <Button
                 type="button"
                 onClick={() => void handleProviderAuth("google.com")}
