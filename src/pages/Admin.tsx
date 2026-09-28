@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { db } from "@/lib/db";
 import type { Category, Expense, Order, Product, ProductSize, PromoCode, StoreSettings, UserProfile } from "@/lib/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -33,6 +33,7 @@ import {
   TrendingDown,
   TrendingUp,
   Users,
+  Volume2,
   WalletCards,
   Image as ImageIcon,
 } from "lucide-react";
@@ -52,6 +53,22 @@ const SalesOverviewChart = lazy(() => import("@/components/admin/SalesOverviewCh
 
 const ADMIN_EMAIL = (import.meta as any).env?.VITE_ADMIN_EMAIL?.toString()?.trim()?.toLowerCase() || "admin@hala-alyusr.com";
 const MAX_SOURCE_IMAGE_BYTES = 12 * 1024 * 1024;
+
+const playAdminOrderTone = (context: AudioContext) => {
+  [880, 660, 880].forEach((frequency, index) => {
+    const startAt = context.currentTime + index * 0.18;
+    const oscillator = context.createOscillator();
+    const volume = context.createGain();
+    oscillator.frequency.value = frequency;
+    volume.gain.setValueAtTime(0.0001, startAt);
+    volume.gain.exponentialRampToValueAtTime(0.16, startAt + 0.015);
+    volume.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.15);
+    oscillator.connect(volume);
+    volume.connect(context.destination);
+    oscillator.start(startAt);
+    oscillator.stop(startAt + 0.16);
+  });
+};
 
 // Resize large phone photos before sending them through the upload API.
 const compressImage = async (file: File): Promise<Blob> => {
@@ -124,6 +141,9 @@ export default function Admin() {
   const { lang, setLang } = useLanguage();
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [orderSoundEnabled, setOrderSoundEnabled] = useState(false);
+  const orderSoundEnabledRef = useRef(false);
+  const orderAudioContextRef = useRef<AudioContext | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
@@ -144,6 +164,22 @@ export default function Admin() {
   const [customerLoggedIn, setCustomerLoggedIn] = useState<string | null>(null);
   const [ordersPage, setOrdersPage] = useState(1);
   const ordersPerPage = 20;
+
+  const enableOrderSound = useCallback(async () => {
+    try {
+      const context = orderAudioContextRef.current || new AudioContext();
+      orderAudioContextRef.current = context;
+      await context.resume();
+      if (context.state !== "running") throw new Error("Audio context is not active");
+      playAdminOrderTone(context);
+      orderSoundEnabledRef.current = true;
+      setOrderSoundEnabled(true);
+      toast.success("تم تفعيل صوت تنبيه الطلبات");
+    } catch (error) {
+      console.warn("Could not enable order notification sound:", error);
+      toast.error("تعذر تفعيل الصوت. اسمح بالصوت في المتصفح ثم حاول مرة أخرى.");
+    }
+  }, []);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isAddCustomerOpen, setIsAddCustomerOpen] = useState(false);
@@ -250,19 +286,21 @@ export default function Admin() {
           }
 
           if (isValid) {
-            try {
-              const audio = new Audio("https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3?filename=success-1-6297.mp3");
-              audio.volume = 0.7;
-              audio.play();
-              toast.success("يوجد طلب جديد مكتمل البيانات!", { duration: 5000 });
-            } catch (err) {
-              console.error("Failed to play notification sound", err);
+            toast.success("يوجد طلب جديد مكتمل البيانات!", { duration: 5000 });
+            const context = orderAudioContextRef.current;
+            if (orderSoundEnabledRef.current && context) {
+              void context.resume()
+                .then(() => playAdminOrderTone(context))
+                .catch((error) => console.warn("Failed to play order notification sound:", error));
             }
           }
         }
       });
 
       initialLoad = false;
+    }, (error) => {
+      console.error("Failed to receive new orders:", error);
+      toast.error("تعذر استقبال الطلبات الجديدة. تحقق من اتصال لوحة الإدارة بقاعدة البيانات.");
     });
 
     return () => unsubscribe();
@@ -815,6 +853,17 @@ export default function Admin() {
             <p className="text-muted-foreground mt-1">إدارة المنتجات وحساب المبيعات</p>
           </div>
           <div className="flex flex-wrap gap-2 items-center justify-end">
+            <Button
+              type="button"
+              variant={orderSoundEnabled ? "secondary" : "outline"}
+              size="sm"
+              aria-pressed={orderSoundEnabled}
+              onClick={() => void enableOrderSound()}
+              className="gap-2"
+            >
+              <Volume2 className="h-4 w-4" />
+              {orderSoundEnabled ? "صوت الطلبات مفعّل" : "تفعيل صوت الطلبات"}
+            </Button>
             <Button
               variant="ghost"
               size="icon"
