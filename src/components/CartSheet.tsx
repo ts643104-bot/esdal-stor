@@ -328,7 +328,9 @@ export default function CartSheet() {
       if (whatsappWindow && !whatsappWindow.closed) {
         whatsappWindow.location.replace(waUrl);
       } else {
-        toast.success("تم تسجيل الطلب. افتح واتساب من الزر لإرساله للإدارة.");
+        // If the browser blocks a new tab, send the customer to the prepared
+        // WhatsApp message in this tab after the order has been saved.
+        window.location.assign(waUrl);
       }
 
       setSuccessData({
