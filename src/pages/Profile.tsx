@@ -10,9 +10,10 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { ChevronRight, ChevronLeft, Package, UserCircle, LogOut, Award, CheckCircle, Clock, Truck } from "lucide-react";
+import { ChevronRight, ChevronLeft, Package, UserCircle, LogOut, Award, CheckCircle, Clock, Truck, Settings, Plus, Trash2 } from "lucide-react";
 import { MapPicker } from "@/components/MapPicker";
 import { EGYPT_GOVERNORATES } from "@/lib/constants";
+import { isValidEgyptianPhone, normalizeEgyptianPhone } from "@/lib/validation";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Order, UserProfile } from "@/lib/types";
 
@@ -36,6 +37,12 @@ export default function Profile() {
   const [governorate, setGovernorate] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
 
+  // Extra contact numbers (1 to 3) the customer wants the store to reach.
+  const [contactPhones, setContactPhones] = useState<string[]>([]);
+  const [phoneError, setPhoneError] = useState("");
+  const [savingContactPhones, setSavingContactPhones] = useState(false);
+  const MAX_CONTACT_PHONES = 3;
+
   const [orders, setOrders] = useState<Order[]>([]);
   const [confirmingReceiptId, setConfirmingReceiptId] = useState<string | null>(null);
   const [loadingOrders, setLoadingOrders] = useState(false);
@@ -46,6 +53,7 @@ export default function Profile() {
       setPhone(profile.phone || "");
       setAddress(profile.address || "");
       setGovernorate(profile.governorate || "");
+      setContactPhones(Array.isArray(profile.contactPhones) ? profile.contactPhones.slice(0, 3) : []);
     }
   }, [profile]);
 
@@ -241,6 +249,75 @@ export default function Profile() {
       toast.error(t("profile.error.failed" as any) || "حدث خطأ أثناء حفظ البيانات");
     } finally {
       setSavingProfile(false);
+    }
+  };
+
+  const MAX_CONTACT_PHONES_STATE = MAX_CONTACT_PHONES;
+
+  const addContactPhone = () => {
+    setPhoneError("");
+    if (contactPhones.length >= MAX_CONTACT_PHONES) {
+      setPhoneError(`يمكنك إضافة ${MAX_CONTACT_PHONES} أرقام كحد أقصى.`);
+      return;
+    }
+    setContactPhones((prev) => [...prev, ""]);
+  };
+
+  const updateContactPhone = (index: number, value: string) => {
+    setPhoneError("");
+    setContactPhones((prev) => prev.map((p, i) => (i === index ? value : p)));
+  };
+
+  const removeContactPhone = (index: number) => {
+    setPhoneError("");
+    setContactPhones((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleSaveContactPhones = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+
+    const filled = contactPhones.map((p) => p.trim()).filter(Boolean);
+    if (!filled.length) {
+      setPhoneError("أضف رقماً واحداً على الأقل.");
+      return;
+    }
+    if (filled.length > MAX_CONTACT_PHONES) {
+      setPhoneError(`يمكنك إضافة ${MAX_CONTACT_PHONES} أرقام كحد أقصى.`);
+      return;
+    }
+
+    const invalid = filled.filter((p) => !isValidEgyptianPhone(p));
+    if (invalid.length) {
+      setPhoneError(`رقم غير صحيح: ${invalid.join("، ")}. تأكد أن الرقم مصري صحيح (مثال: 01012345678).`);
+      return;
+    }
+
+    const normalized = Array.from(new Set(filled.map(normalizeEgyptianPhone)));
+    if (normalized.length !== filled.length) {
+      setPhoneError("لا يمكن إضافة نفس الرقم مرتين.");
+      return;
+    }
+    if (normalized.includes(normalizeEgyptianPhone(phone))) {
+      setPhoneError("هذا الرقم هو نفسه رقم التواصل الأساسي. أضف رقماً مختلفاً.");
+      return;
+    }
+
+    setSavingContactPhones(true);
+    try {
+      await db.saveUserProfile({
+        ...(profile as NonNullable<typeof profile>),
+        id: user.uid,
+        contactPhones: normalized,
+      } as UserProfile);
+      await refreshProfile();
+      setContactPhones(normalized);
+      toast.success("تم حفظ أرقام التواصل بنجاح");
+    } catch (err) {
+      console.error(err);
+      toast.error("تعذر حفظ أرقام التواصل. حاول مرة أخرى.");
+    } finally {
+      setSavingContactPhones(false);
     }
   };
 
@@ -611,6 +688,74 @@ export default function Profile() {
                 <div className="pt-2">
                   <Button type="submit" disabled={savingProfile}>
                     {savingProfile ? "..." : (t("profile.save" as any) || "حفظ التعديلات")}
+                  </Button>
+                </div>
+              </form>
+            </section>
+
+            {/* Account settings - extra contact numbers */}
+            <section className="bg-card border rounded-2xl p-6 shadow-sm">
+              <h2 className="text-xl font-bold flex items-center gap-2 mb-2">
+                <Settings className="h-6 w-6 text-primary" />
+                إعدادات حسابي
+              </h2>
+              <p className="text-sm text-muted-foreground mb-6">
+                أضف من <strong>1</strong> إلى <strong>{MAX_CONTACT_PHONES}</strong> أرقام تواصل إضافية يصل المتجر إليها عند الحاجة للتواصل معك.
+              </p>
+
+              <form onSubmit={handleSaveContactPhones} className="space-y-4">
+                <div className="space-y-3">
+                  {contactPhones.length === 0 && (
+                    <div className="text-sm text-muted-foreground bg-muted/30 border border-dashed border-border/60 rounded-xl p-4 text-center">
+                      لم تتم إضافة أرقام تواصل بعد.
+                    </div>
+                  )}
+
+                  {contactPhones.map((cp, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <div className="flex-1">
+                        <Input
+                          type="tel"
+                          dir="ltr"
+                          placeholder={idx === 0 ? "مثال: 01012345678" : `رقم إضافي ${idx + 1}`}
+                          value={cp}
+                          onChange={(e) => updateContactPhone(idx, e.target.value)}
+                          className="text-left"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeContactPhone(idx)}
+                        aria-label={`حذف رقم ${idx + 1}`}
+                        className="text-muted-foreground hover:text-destructive shrink-0"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+
+                {phoneError && (
+                  <p className="text-sm text-destructive font-bold">{phoneError}</p>
+                )}
+
+                <div className="flex flex-wrap gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={addContactPhone}
+                    disabled={contactPhones.length >= MAX_CONTACT_PHONES}
+                    className="gap-2"
+                  >
+                    <Plus className="h-4 w-4" />
+                    {contactPhones.length >= MAX_CONTACT_PHONES
+                      ? `وصلت للحد (${MAX_CONTACT_PHONES})`
+                      : "إضافة رقم تواصل"}
+                  </Button>
+                  <Button type="submit" disabled={savingContactPhones || !contactPhones.length}>
+                    {savingContactPhones ? "جاري الحفظ..." : "حفظ أرقام التواصل"}
                   </Button>
                 </div>
               </form>

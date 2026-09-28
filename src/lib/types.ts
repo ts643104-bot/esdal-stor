@@ -80,6 +80,8 @@ export type UserProfile = {
   termsAccepted?: boolean;
   termsAcceptedAt?: string;
   termsAcceptedEmail?: string;
+  /** Extra contact numbers the customer wants the store to reach them on (max 3). */
+  contactPhones?: string[];
 };
 
 export type Expense = {
