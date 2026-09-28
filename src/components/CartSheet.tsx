@@ -227,7 +227,7 @@ export default function CartSheet() {
     }
   };
 
-  const handleCheckout = async (confirmed = false) => {
+  const handleCheckout = async (confirmed = false, whatsappWindow?: Window | null) => {
     if (isSubmitting) return;
     const safeName = cleanUserText(customerName, 120);
     const safeAddress = cleanUserText(customerAddress, 500);
@@ -325,6 +325,12 @@ export default function CartSheet() {
       const activePhone = getActiveWhatsappNumber(whatsappNumbers);
       const waUrl = `https://wa.me/${activePhone}?text=${encodeURIComponent(waMsg)}`;
 
+      if (whatsappWindow && !whatsappWindow.closed) {
+        whatsappWindow.location.replace(waUrl);
+      } else {
+        toast.success("تم تسجيل الطلب. افتح واتساب من الزر لإرساله للإدارة.");
+      }
+
       setSuccessData({
         orderId, waUrl, paymentMethod,
         details: { name: customerName, phone: customerPhone, items: [...cart.items], total: finalTotal }
@@ -332,6 +338,7 @@ export default function CartSheet() {
 
       cart.clear();
     } catch (error: any) {
+      whatsappWindow?.close();
       const code = error?.code || "unknown";
       const message = code === "permission-denied"
         ? "تعذر حفظ الطلب بسبب صلاحيات قاعدة البيانات. حاول تسجيل الخروج والدخول ثم أعد المحاولة."
@@ -717,11 +724,22 @@ export default function CartSheet() {
                 سيتم تسجيل طلبك بقيمة <strong className="text-primary">{finalTotal.toLocaleString("ar-EG")} ج.م</strong>.
                 {paymentMethod === "cod" ? " سيتم الدفع عند الاستلام." : " سيتم إرسال تفاصيل التحويل إلى المتجر للمراجعة."} هل تريد المتابعة؟
               </AlertDialogDescription>
+              <p className="text-xs text-muted-foreground">
+                بعد التسجيل سيفتح واتساب برسالة الطلب جاهزة؛ اضغط «إرسال» داخل واتساب ليصل الطلب للإدارة.
+              </p>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>مراجعة الطلب</AlertDialogCancel>
-              <AlertDialogAction disabled={isSubmitting} onClick={() => { setIsConfirmOpen(false); void handleCheckout(true); }}>
-                نعم، سجّل الطلب
+              <AlertDialogAction disabled={isSubmitting} onClick={() => {
+                const whatsappWindow = window.open("about:blank", "_blank");
+                if (whatsappWindow) {
+                  whatsappWindow.opener = null;
+                  whatsappWindow.document.title = "جارٍ تأكيد الطلب";
+                }
+                setIsConfirmOpen(false);
+                void handleCheckout(true, whatsappWindow);
+              }}>
+                تأكيد الطلب وفتح واتساب
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
