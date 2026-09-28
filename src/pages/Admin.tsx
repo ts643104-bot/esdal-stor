@@ -47,6 +47,7 @@ import { Link } from "wouter";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { cleanUserText, isValidEgyptianPhone, normalizeEgyptianPhone } from "@/lib/validation";
 import { uploadImage } from "@/lib/image-upload";
+import { toWhatsappNumber } from "@/lib/utils";
 
 // Lazy-load Recharts to keep initial bundle light
 const SalesOverviewChart = lazy(() => import("@/components/admin/SalesOverviewChart"));
@@ -605,11 +606,30 @@ export default function Admin() {
   const handleSaveSettings = useCallback(async () => {
     setSavingSettings(true);
     try {
+      // Normalise to the international form (20...) and drop duplicates, so
+      // checkout always builds a valid wa.me link from whatever the admin typed.
+      const rawNumbers = (settings.whatsappNumbers || []).filter(n => n.trim().length > 0);
+      const normalizedNumbers = Array.from(new Set(
+        rawNumbers
+          .map(toWhatsappNumber)
+          .filter((n): n is string => Boolean(n))
+      ));
+
+      // Never drop an unrecognised number silently - that would look like the
+      // number was saved when in fact it was discarded.
+      const rejected = rawNumbers.filter(n => !toWhatsappNumber(n));
+      if (rejected.length) {
+        toast.error(
+          `تعذر حفظ رقم غير صحيح: ${rejected.join("، ")}. تأكد من أن الرقم مصري صحيح (مثال: 01140971703 أو 201140971703).`
+        );
+        return;
+      }
+
       const clean: StoreSettings = {
         discountPercentage: Math.min(100, Math.max(0, Number(settings.discountPercentage) || 0)),
         lowStockThreshold: Math.max(1, Number(settings.lowStockThreshold) || 3),
         bankAccountNumber: sanitizeInput(settings.bankAccountNumber || ""),
-        whatsappNumbers: (settings.whatsappNumbers || []).filter(n => n.trim().length > 0),
+        whatsappNumbers: normalizedNumbers,
       };
       await db.saveSettings(clean);
       setSettings(clean);

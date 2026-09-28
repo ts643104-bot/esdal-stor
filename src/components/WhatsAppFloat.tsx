@@ -2,11 +2,11 @@ import { MessageCircle } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useEffect, useState } from "react";
 import { db } from "@/lib/db";
-import { getActiveWhatsappNumber } from "@/lib/utils";
+import { getActiveWhatsappNumber, DEFAULT_WHATSAPP_NUMBER, buildWhatsappLink } from "@/lib/utils";
 
 export default function WhatsAppFloat() {
   const { lang } = useLanguage();
-  const [phone, setPhone] = useState("201140971703");
+  const [phone, setPhone] = useState(DEFAULT_WHATSAPP_NUMBER);
 
   useEffect(() => {
     const loadPhone = async () => {
@@ -25,7 +25,7 @@ export default function WhatsAppFloat() {
 
   return (
     <a
-      href={`https://wa.me/${phone}?text=${encodeURIComponent(message)}`}
+      href={buildWhatsappLink(phone, message)}
       target="_blank"
       rel="noopener noreferrer"
       className="fixed bottom-6 right-6 z-50 flex items-center justify-center h-16 w-16 bg-[#25D366] text-white rounded-full shadow-2xl hover:scale-110 transition-transform active:scale-95"

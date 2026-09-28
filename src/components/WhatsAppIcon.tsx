@@ -3,11 +3,11 @@ import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useEffect, useState } from "react";
 import { db } from "@/lib/db";
-import { getActiveWhatsappNumber } from "@/lib/utils";
+import { getActiveWhatsappNumber, DEFAULT_WHATSAPP_NUMBER, buildWhatsappLink } from "@/lib/utils";
 
 export default function WhatsAppIcon() {
   const { lang } = useLanguage();
-  const [phone, setPhone] = useState("201122310891");
+  const [phone, setPhone] = useState(DEFAULT_WHATSAPP_NUMBER);
 
   useEffect(() => {
     const loadPhone = async () => {
@@ -22,13 +22,12 @@ export default function WhatsAppIcon() {
     loadPhone();
   }, []);
 
-  const message = lang === "ar" 
-    ? "مرحباً متجر هلا اليسر، لدي استفسار..." 
+  const message = lang === "ar"
+    ? "مرحباً متجر هلا اليسر، لدي استفسار..."
     : "Hi Hala Al-Yusr, I have a question...";
-    
+
   const handleClick = () => {
-    const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
-    window.open(url, "_blank");
+    window.open(buildWhatsappLink(phone, message), "_blank");
   };
 
   return (

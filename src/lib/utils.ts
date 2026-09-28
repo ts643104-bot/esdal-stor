@@ -6,25 +6,61 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
- * Get a random WhatsApp number from the list for load balancing
- * If multiple numbers are provided, rotates through them based on timestamp
+ * The store's single source of truth for its WhatsApp number.
+ * Every WhatsApp entry point (checkout, floating button, quick chat) reads this,
+ * so a number saved in the admin panel is used everywhere instead of the
+ * previously duplicated hardcoded values that could drift apart.
+ */
+export const DEFAULT_WHATSAPP_NUMBER = "201140971703";
+
+/**
+ * Convert any Egyptian phone format into the international form `wa.me` expects:
+ * digits only, country code 20, no leading zero.
+ *
+ *   01140971703  -> 201140971703        (local)
+ *   201140971703 -> 201140971703        (already international)
+ *   1140971703   -> 201140971703        (local without the 0)
+ *   +20 114 097 1703 -> 201140971703    (spaced / plus form)
+ *
+ * Returns null when the value is not a usable Egyptian number, so callers can
+ * surface a real error instead of silently building a dead wa.me link.
+ */
+export function toWhatsappNumber(value?: string | null): string | null {
+  if (!value) return null;
+  let digits = value.replace(/\D/g, "");
+  if (!digits) return null;
+
+  // "+20 114 097 1703" and "0020 114 097 1703" both arrive with extra prefixes.
+  if (digits.startsWith("0020")) digits = digits.slice(2);
+  if (digits.startsWith("20")) digits = digits.slice(2);
+  if (digits.startsWith("0")) digits = digits.slice(1);
+
+  // An Egyptian mobile is 10 national digits (1 + operator digit + 8 digits).
+  if (digits.length !== 10) return null;
+  if (!/^1[0125]\d{8}$/.test(digits)) return null;
+
+  return `20${digits}`;
+}
+
+/**
+ * Get the active WhatsApp number for outgoing messages.
+ *
+ * Falls back to DEFAULT_WHATSAPP_NUMBER when the store has no valid number
+ * configured, and rotates between several numbers to spread incoming chats.
  */
 export function getActiveWhatsappNumber(numbers?: string[]): string {
-  const defaultNumber = "201140971703";
-  if (!numbers?.length) return defaultNumber;
+  const validNumbers = (numbers || [])
+    .map(toWhatsappNumber)
+    .filter((n): n is string => Boolean(n));
 
-  // wa.me needs an international number without the local leading zero.
-  const normalizeForWhatsapp = (value: string) => {
-    const digits = value.replace(/\D/g, "");
-    if (digits.startsWith("20") && digits.length === 12) return digits;
-    if (digits.startsWith("0") && digits.length === 11) return `20${digits.slice(1)}`;
-    if (digits.startsWith("1") && digits.length === 10) return `20${digits}`;
-    return digits;
-  };
-  const validNumbers = numbers.map(normalizeForWhatsapp).filter(Boolean);
-  if (!validNumbers.length) return defaultNumber;
+  if (!validNumbers.length) return DEFAULT_WHATSAPP_NUMBER;
   if (validNumbers.length === 1) return validNumbers[0];
 
   const index = Math.floor(Date.now() / 1000) % validNumbers.length;
   return validNumbers[index];
+}
+
+/** Build a wa.me deep link with a pre-filled message. */
+export function buildWhatsappLink(phone: string | null | undefined, message: string): string {
+  return `https://wa.me/${getActiveWhatsappNumber(phone ? [phone] : undefined)}?text=${encodeURIComponent(message)}`;
 }

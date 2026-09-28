@@ -16,6 +16,7 @@ import { motion } from "framer-motion";
 import CartSheet from "@/components/CartSheet";
 import TrackOrder from "@/components/TrackOrder";
 import type { Product } from "@/lib/types";
+import { buildWhatsappLink, getActiveWhatsappNumber } from "@/lib/utils";
 
 interface HomeProps {
   targetSection?: string;
@@ -141,10 +142,18 @@ export default function Home({ targetSection }: HomeProps) {
     return () => observer.disconnect();
   }, [filtered.length, page, productsPerPage]);
 
-  const handleWhatsAppQuickChat = () => {
-    const phone = "201122310891";
-    const msg = encodeURIComponent("أهلاً متجر هلا اليسر، كنت أرغب في الاستفسار عن بعض المنتجات المتاحة..");
-    window.open(`https://wa.me/${phone}?text=${msg}`, "_blank");
+  const handleWhatsAppQuickChat = async () => {
+    const message = "أهلاً متجر هلا اليسر، كنت أرغب في الاستفسار عن بعض المنتجات المتاحة..";
+    // Read the store's configured number so quick chat always reaches the same
+    // inbox as checkout, instead of a second hardcoded number.
+    let numbers: string[] | undefined;
+    try {
+      const { db } = await import("@/lib/db");
+      numbers = (await db.getSettings()).whatsappNumbers;
+    } catch (err) {
+      console.warn("Failed to load store WhatsApp numbers for quick chat", err);
+    }
+    window.open(buildWhatsappLink(getActiveWhatsappNumber(numbers), message), "_blank", "noopener,noreferrer");
   };
 
   return (

@@ -18,7 +18,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { toast } from "sonner";
 import { EGYPT_GOVERNORATES } from "@/lib/constants";
-import { getActiveWhatsappNumber } from "@/lib/utils";
+import { buildWhatsappLink, getActiveWhatsappNumber, toWhatsappNumber } from "@/lib/utils";
 import { cleanUserText, isValidEgyptianPhone, normalizeEgyptianPhone } from "@/lib/validation";
 import { uploadImage } from "@/lib/image-upload";
 
@@ -322,8 +322,24 @@ export default function CartSheet() {
       }).catch(err => console.error("Failed to send email notification", err));
 
       const waMsg = buildWhatsappMessage(cart.items, cart.totalPrice, shippingCost, totalDiscount, finalTotal, paymentMethod, senderPhone, safeName, safeAddress, normalizedPhone, governorate, orderId, orderNoteWithPromo, receiptUrl, transferredAmount);
-      const activePhone = getActiveWhatsappNumber(whatsappNumbers);
-      const waUrl = `https://wa.me/${activePhone}?text=${encodeURIComponent(waMsg)}`;
+
+      // Read the store's WhatsApp numbers fresh at submit time. The live
+      // `whatsappNumbers` state is filled by an async settings listener that may
+      // not have resolved yet, which previously made checkout silently fall back
+      // to the hardcoded default number and deliver the order to the wrong chat.
+      let numbersForOrder: string[] = whatsappNumbers;
+      try {
+        const latestSettings = await db.getSettings();
+        const latestNumbers = (latestSettings.whatsappNumbers || [])
+          .map(toWhatsappNumber)
+          .filter((n): n is string => Boolean(n));
+        if (latestNumbers.length) numbersForOrder = latestNumbers;
+      } catch (error) {
+        console.warn("Could not refresh WhatsApp numbers, using the last known list:", error);
+      }
+
+      const activePhone = getActiveWhatsappNumber(numbersForOrder);
+      const waUrl = buildWhatsappLink(activePhone, waMsg);
 
       if (whatsappWindow && !whatsappWindow.closed) {
         whatsappWindow.location.replace(waUrl);
